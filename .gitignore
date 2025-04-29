@@ -160,5 +160,3 @@ cython_debug/
 
 # Mac environment
 .DS_Store
-
-#.idea/
