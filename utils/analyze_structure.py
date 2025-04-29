@@ -1,4 +1,5 @@
 import ezdxf
+import os
 from io import StringIO
 
 # バージョンに応じた TagWriter のインポート
@@ -120,3 +121,20 @@ def analyze_dxf_structure(dxf_file):
     all_rows.append(['CLASSES', 'INFO', '', '', 'CLASSES セクションは存在すればファイル内に含まれます'])
 
     return all_rows
+
+def get_default_output_filename(input_dxf, output_format='xlsx'):
+    """
+    入力DXFファイル名から適切な出力ファイル名を生成する
+    
+    Args:
+        input_dxf: 入力DXFファイル名
+        output_format: 出力形式 ('xlsx' または 'csv')
+        
+    Returns:
+        str: デフォルトの出力ファイル名
+    """
+    base_name = os.path.splitext(input_dxf)[0]
+    if output_format.lower() == 'csv':
+        return f"{base_name}.csv"
+    else:
+        return f"{base_name}.xlsx"
