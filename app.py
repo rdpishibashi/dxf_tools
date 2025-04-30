@@ -100,7 +100,7 @@ def main():
             )
             sort_value = sort_option[1]  # タプルの2番目の要素（実際の値）を取得
             
-        debug_option = st.checkbox("デバッグ情報を表示", value=False, help="フィルタリングの詳細情報を表示します")
+        debug_option = st.checkbox("デバッグ情報を表示", value=False, help="フィルタリングの詳細情報を表示します。")
             
         if uploaded_file is not None:
             try:
@@ -166,11 +166,11 @@ def main():
         
         # セクション分割オプション
         use_split = st.checkbox("セクションごとに分割して保存", value=False, 
-                              help="ONにすると、HEADER, BLOCKS, ENTITIES などのセクションごとに別ファイルに分割されます")
+                              help="ONにすると、HEADER, BLOCKS, ENTITIES などのセクションごとに別ファイルに分割されます。")
         
         # CSV強制オプション
         use_csv = st.checkbox("CSV形式で保存", value=False, 
-                            help="ONにすると、Excel形式ではなくCSV形式で保存されます")
+                            help="ONにすると、Excel形式ではなくCSV形式で保存されます。")
             
         if uploaded_file is not None:
             try:
@@ -444,19 +444,19 @@ def main():
                 output_filename += '.txt'
         
         with col2:
-            use_filename = st.checkbox("ファイル名を図面番号として使用", value=True)
+            use_filename = st.checkbox("ファイル名にある図面番号を使用", value=True)
             assembly_number = None if use_filename else st.text_input("図面番号", "")
         
         # 追加オプション
         col3, col4 = st.columns(2)
         
         with col3:
-            use_all_assemblies = st.checkbox("全ての可能なアセンブリ番号を使用", value=False, 
-                                            help="Excelファイル内で検出できる全ての図面番号に対して処理を行います")
+            use_all_assemblies = st.checkbox("全ての可能な図面番号を使用", value=False, 
+                                            help="Excelファイル内で検出できる部品を含む全ての図面番号に対して処理を行います。")
         
         with col4:
             include_maker_info = st.checkbox("メーカー情報を含める", value=False,
-                                            help="出力にメーカー名とメーカー型式を含めます。CSVフォーマットになります")
+                                            help="出力にメーカー名とメーカー型式を含めます。CSVフォーマットになります。")
             
         if uploaded_file is not None:
             try:
