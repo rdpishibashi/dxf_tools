@@ -430,8 +430,9 @@ def main():
         
         uploaded_file = st.file_uploader("Excelファイルをアップロード", type=["xlsx"], key="circuit_extractor")
         
-        # アセンブリ番号入力
+        # 各種オプション設定
         col1, col2 = st.columns(2)
+        
         with col1:
             # デフォルトのファイル名を設定
             default_filename = "circuit_symbols.txt"
@@ -445,6 +446,17 @@ def main():
         with col2:
             use_filename = st.checkbox("ファイル名を図面番号として使用", value=True)
             assembly_number = None if use_filename else st.text_input("図面番号", "")
+        
+        # 追加オプション
+        col3, col4 = st.columns(2)
+        
+        with col3:
+            use_all_assemblies = st.checkbox("全ての可能なアセンブリ番号を使用", value=False, 
+                                            help="Excelファイル内で検出できる全ての図面番号に対して処理を行います")
+        
+        with col4:
+            include_maker_info = st.checkbox("メーカー情報を含める", value=False,
+                                            help="出力にメーカー名とメーカー型式を含めます。CSVフォーマットになります")
             
         if uploaded_file is not None:
             try:
@@ -459,7 +471,12 @@ def main():
                             assembly_number = os.path.splitext(filename)[0]
                         
                         # 回路記号を抽出
-                        symbols, info = extract_circuit_symbols(temp_file, assembly_number)
+                        symbols, info = extract_circuit_symbols(
+                            temp_file,
+                            assembly_number=assembly_number,
+                            use_all_assemblies=use_all_assemblies,
+                            include_maker_info=include_maker_info
+                        )
                         
                         # 処理結果の表示
                         st.subheader("抽出結果")
