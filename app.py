@@ -36,23 +36,23 @@ def main():
     )
     
     st.title('DXF file Analysis Tools')
-    st.write('CADのDXFファイルを分析・比較するツールです')
+    st.write('CADのDXFファイルを分析・比較するツールです。')
     
     # メニュー順序を元の順序に合わせる
     tool_selection = st.sidebar.radio(
         'ツールを選択',
         [
-            'ラベル抽出（テキスト出力）', 
+            '図面ラベル抽出', 
             '構造分析（Excel出力）', 
             '構造分析（テキスト出力）', 
-            '図形差分抽出（DXF出力）', 
-            'ラベル差分抽出（テキスト出力）',
-            '回路記号抽出（テキスト出力）',
-            '回路記号リスト差分抽出（テキスト出力）'
+            '図面差分抽出', 
+            '図面ラベル差分抽出',
+            'Excel回路記号抽出',
+            '回路記号リスト差分抽出'
         ]
     )
 
-    if tool_selection == 'ラベル抽出（テキスト出力）':
+    if tool_selection == '図面ラベル抽出':
         st.header('DXFファイルからラベルを抽出')
         uploaded_file = st.file_uploader("DXFファイルをアップロード", type="dxf", key="label_extractor")
         
@@ -315,7 +315,7 @@ def main():
                 st.error(f"エラーが発生しました: {str(e)}")
                 st.error(traceback.format_exc())
 
-    elif tool_selection == '図形差分抽出（DXF出力）':
+    elif tool_selection == '図面差分抽出':
         st.header('2つのDXFファイルを比較し差分を抽出しDXFフォーマットで出力')
         col1, col2 = st.columns(2)
         
@@ -374,7 +374,7 @@ def main():
                 st.error(f"エラーが発生しました: {str(e)}")
                 st.error(traceback.format_exc())
 
-    elif tool_selection == 'ラベル差分抽出（テキスト出力）':
+    elif tool_selection == '図面ラベル差分抽出':
         st.header('2つのDXFファイルのラベルを比較し、差分をマークダウン形式テキストファイルで出力')
         col1, col2 = st.columns(2)
         
@@ -406,7 +406,7 @@ def main():
                         comparison_result = compare_labels(temp_file_a, temp_file_b)
                         
                         # 結果を表示
-                        st.subheader("ラベル差分抽出結果")
+                        st.subheader("図面ラベル差分抽出結果")
                         st.markdown(comparison_result)
                         
                         # ダウンロードボタンを作成
@@ -425,7 +425,7 @@ def main():
                 st.error(f"エラーが発生しました: {str(e)}")
                 st.error(traceback.format_exc())
    
-    elif tool_selection == '回路記号抽出（テキスト出力）':
+    elif tool_selection == 'Excel回路記号抽出':
         st.header('ULKES Excelファイルから回路記号を抽出')
         
         uploaded_file = st.file_uploader("Excelファイルをアップロード", type=["xlsx"], key="circuit_extractor")
@@ -509,7 +509,7 @@ def main():
                 st.error(f"エラーが発生しました: {str(e)}")
                 st.error(traceback.format_exc())
 
-    elif tool_selection == '回路記号リスト差分抽出（テキスト出力）':
+    elif tool_selection == '回路記号リスト差分抽出':
         st.header('2つの回路記号リストを比較し差分を抽出し、マークダウン形式テキストファイルで出力')
         col1, col2 = st.columns(2)
         
