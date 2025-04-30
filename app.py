@@ -457,6 +457,10 @@ def main():
         with col4:
             include_maker_info = st.checkbox("メーカー情報を含める", value=False,
                                             help="出力にメーカー名とメーカー型式を含めます。CSVフォーマットになります")
+        
+        # デバッグモードを追加
+        debug_mode = st.checkbox("デバッグモード", value=False, 
+                               help="詳細な処理情報を表示します")
             
         if uploaded_file is not None:
             try:
@@ -465,17 +469,25 @@ def main():
                 
                 if st.button("回路記号を抽出"):
                     with st.spinner('回路記号を抽出中...'):
+                        # デバッグモードが有効な場合、元のファイル名を表示
+                        if debug_mode:
+                            st.info(f"元のファイル名: {uploaded_file.name}")
+                            
                         # ファイル名からアセンブリ番号を取得
                         if use_filename:
-                            filename = os.path.basename(uploaded_file.name)
-                            assembly_number = os.path.splitext(filename)[0]
+                            # extract_assembly_number_from_filename関数を使用
+                            from utils.extract_symbols import extract_assembly_number_from_filename
+                            assembly_number = extract_assembly_number_from_filename(uploaded_file.name)
+                            if debug_mode:
+                                st.info(f"抽出した図面番号: {assembly_number}")
                         
                         # 回路記号を抽出
                         symbols, info = extract_circuit_symbols(
                             temp_file,
                             assembly_number=assembly_number,
                             use_all_assemblies=use_all_assemblies,
-                            include_maker_info=include_maker_info
+                            include_maker_info=include_maker_info,
+                            debug=debug_mode
                         )
                         
                         # 処理結果の表示
@@ -487,6 +499,12 @@ def main():
                             st.info(f"図面番号: {info['assembly_number']}")
                             st.info(f"対象データ行数: {info['processed_rows']} / {info['total_rows']}")
                             st.info(f"抽出された回路記号数: {info['total_symbols']}")
+                            
+                            # デバッグ情報の表示
+                            if debug_mode and "debug_info" in info:
+                                st.subheader("デバッグ情報")
+                                for key, value in info["debug_info"].items():
+                                    st.info(f"{key}: {value}")
                             
                             # 抽出された回路記号の表示
                             st.text_area("回路記号リスト", "\n".join(symbols), height=300)
