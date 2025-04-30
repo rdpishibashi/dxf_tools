@@ -9,7 +9,7 @@ import traceback
 # モジュールのインポート
 from utils.extract_labels import extract_labels
 from utils.analyze_structure import analyze_dxf_structure, get_default_output_filename
-from utils.extract_hierachy import extract_hierachy
+from utils.extract_hierarchy import extract_hierarchy
 from utils.compare_dxf import compare_dxf_files_and_generate_dxf
 from utils.compare_labels import compare_labels
 from utils.extract_symbols import extract_circuit_symbols
@@ -293,14 +293,14 @@ def main():
                 
                 if st.button("構造を分析"):
                     with st.spinner('DXFデータ構造を分析中...'):
-                        hierachy_lines = extract_hierachy(temp_file)
+                        hierarchy_lines = extract_hierarchy(temp_file)
                         
                         # 結果を表示
                         st.subheader("構造分析結果")
-                        st.text_area("マークダウン形式テキスト", "\n".join(hierachy_lines), height=300)
+                        st.text_area("マークダウン形式テキスト", "\n".join(hierarchy_lines), height=300)
                         
                         # ダウンロードボタンを作成
-                        md_str = "\n".join(hierachy_lines)
+                        md_str = "\n".join(hierarchy_lines)
                         st.download_button(
                             label="マークダウン形式テキストファイルをダウンロード",
                             data=md_str.encode('utf-8'),

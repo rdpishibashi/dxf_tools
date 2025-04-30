@@ -55,7 +55,7 @@ def get_sorted_entity_tags(entity):
 
     return [f"- {code} ({meaning}): {value}" for code, meaning, value in tags]
 
-def extract_hierachy(dxf_file):
+def extract_hierarchy(dxf_file):
     """
     DXFファイルの階層構造を抽出する
     
