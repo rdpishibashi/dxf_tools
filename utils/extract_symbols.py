@@ -66,7 +66,7 @@ def find_all_possible_assembly_numbers(df):
     
     return possible_assemblies
 
-def extract_circuit_symbols(input_excel, assembly_number=None, use_all_assemblies=False, include_maker_info=False, debug=False):
+def extract_circuit_symbols(input_excel, assembly_number=None, use_all_assemblies=False, include_maker_info=False):
     """
     Excelファイルから回路記号リストを抽出する。
     
@@ -75,7 +75,6 @@ def extract_circuit_symbols(input_excel, assembly_number=None, use_all_assemblie
         assembly_number (str, optional): 図面番号（指定しない場合はファイル名から抽出）
         use_all_assemblies (bool): 全ての可能なアセンブリ番号を使用するかどうか
         include_maker_info (bool): メーカー名とメーカー型式を出力に含めるかどうか
-        debug (bool): デバッグ情報を出力するかどうか
         
     Returns:
         tuple: (回路記号リスト, 処理情報)
@@ -83,12 +82,10 @@ def extract_circuit_symbols(input_excel, assembly_number=None, use_all_assemblie
     # 情報を格納する辞書を先に初期化
     info = {
         "assembly_number": assembly_number if assembly_number else os.path.splitext(os.path.basename(input_excel))[0],
-        "original_filename": os.path.basename(input_excel),
         "total_rows": 0,
         "processed_rows": 0,
         "total_symbols": 0,
-        "error": None,
-        "debug_info": {}
+        "error": None
     }
     
     try:
@@ -96,17 +93,9 @@ def extract_circuit_symbols(input_excel, assembly_number=None, use_all_assemblie
         if not assembly_number:
             filename = os.path.basename(input_excel)
             suggested_assembly_number = extract_assembly_number_from_filename(filename)
-            if debug:
-                print(f"元のファイル名: {filename}")
-                print(f"抽出したアセンブリ番号: {suggested_assembly_number}")
-            
-            info["debug_info"]["original_filename"] = filename
-            info["debug_info"]["extracted_assembly"] = suggested_assembly_number
             info["assembly_number"] = suggested_assembly_number
         else:
             suggested_assembly_number = assembly_number
-            if debug:
-                print(f"指定されたアセンブリ番号: {suggested_assembly_number}")
         
         try:
             # Excelファイルを読み込む（1行目をヘッダーとして）
@@ -142,12 +131,7 @@ def extract_circuit_symbols(input_excel, assembly_number=None, use_all_assemblie
             if possible_assemblies:
                 assembly_numbers = possible_assemblies
                 info["assembly_number"] = ",".join(assembly_numbers)
-                if debug:
-                    print(f"検出された可能なアセンブリ番号: {', '.join(assembly_numbers)}")
             else:
-                info["debug_info"]["warning"] = "可能なアセンブリ番号が見つかりませんでした。"
-                if debug:
-                    print("警告: 可能なアセンブリ番号が見つかりませんでした。")
                 # アセンブリ番号が見つからなかった場合でも、ファイル名から抽出したものを使用
                 assembly_numbers = [suggested_assembly_number]
         else:
@@ -157,22 +141,13 @@ def extract_circuit_symbols(input_excel, assembly_number=None, use_all_assemblie
                 if pd.notna(row["図面番号"]) and str(row["図面番号"]) == suggested_assembly_number:
                     assembly_numbers = [suggested_assembly_number]
                     assembly_found = True
-                    if debug:
-                        print(f"図面番号列でアセンブリ番号 '{suggested_assembly_number}' が見つかりました")
                     break
             
             # アセンブリ番号が見つからなかった場合は、ファイル名全体を使用
             if not assembly_found:
-                info["debug_info"]["warning"] = f"図面番号 '{suggested_assembly_number}' が見つかりませんでした。"
-                if debug:
-                    print(f"警告: 図面番号 '{suggested_assembly_number}' が見つかりませんでした。")
                 assembly_number = os.path.splitext(os.path.basename(input_excel))[0]
                 info["assembly_number"] = assembly_number
                 assembly_numbers = [assembly_number]
-                if debug:
-                    print(f"ファイル名全体をアセンブリ番号として使用します: {assembly_number}")
-            else:
-                info["assembly_number"] = suggested_assembly_number
         
         # すべての回路記号を格納するリスト
         all_circuit_symbols = []
@@ -180,9 +155,6 @@ def extract_circuit_symbols(input_excel, assembly_number=None, use_all_assemblie
         
         # 各アセンブリ番号について処理を実行
         for assembly_number in assembly_numbers:
-            if debug:
-                print(f"===== アセンブリ番号 '{assembly_number}' の処理を開始 =====")
-            
             # 処理対象の行を特定
             start_processing = False
             processing_rows = []
@@ -191,28 +163,19 @@ def extract_circuit_symbols(input_excel, assembly_number=None, use_all_assemblie
                 # アセンブリ番号と一致する図面番号を探す
                 if not start_processing and pd.notna(row["図面番号"]) and str(row["図面番号"]) == assembly_number:
                     start_processing = True
-                    if debug:
-                        print(f"行 {i+1}: 図面番号 '{assembly_number}' を検出 - 処理開始")
                     continue  # 一致した行は処理対象外
                 
                 # 処理開始後、図面番号が空白の行を処理対象とする
                 if start_processing:
                     if pd.isna(row["図面番号"]) or str(row["図面番号"]).strip() == "":
                         processing_rows.append(i)
-                        if debug and len(processing_rows) <= 3:  # 最初の数行だけデバッグ表示
-                            print(f"行 {i+1}: 処理対象として追加")
                     else:
                         # 図面番号が空白でなくなったら処理終了
-                        if debug:
-                            print(f"行 {i+1}: 新しい図面番号を検出 - 処理終了")
                         break
             
             total_processed_rows += len(processing_rows)
             
             if not processing_rows:
-                info["debug_info"][f"warning_{assembly_number}"] = f"処理対象となる行が見つかりません。"
-                if debug:
-                    print(f"警告: アセンブリ番号 '{assembly_number}' の処理対象となる行が見つかりません。")
                 continue  # 処理対象の行がない場合は次のアセンブリ番号へ
             
             # 回路記号リストを格納するリスト
@@ -226,14 +189,10 @@ def extract_circuit_symbols(input_excel, assembly_number=None, use_all_assemblie
                 if pd.notna(row["構成コメント"]) and "_" in str(row["構成コメント"]):
                     # 構成コメントに"_"が含まれる場合はそちらを使用
                     base_symbols = str(row["構成コメント"]).split("_")
-                    if debug and idx == processing_rows[0]:  # 最初の行だけデバッグ表示
-                        print(f"行 {idx+1}: 構成コメントから回路記号を抽出: {base_symbols}")
                 else:
                     # そうでなければ符号を使用
                     symbol_str = str(row["符号"]) if pd.notna(row["符号"]) else ""
                     base_symbols = symbol_str.split("_") if "_" in symbol_str else [symbol_str]
-                    if debug and idx == processing_rows[0]:  # 最初の行だけデバッグ表示
-                        print(f"行 {idx+1}: 符号から回路記号を抽出: {base_symbols}")
                 
                 # 数値型の場合は整数に変換する
                 qty = int(row["構成数"]) if pd.notna(row["構成数"]) else 0
@@ -258,16 +217,12 @@ def extract_circuit_symbols(input_excel, assembly_number=None, use_all_assemblie
                     # rrrrrはアルファベット部分、dddは行ごとに001からのシーケンス番号
                     for i in range(qty - symbol_count):
                         final_symbols.append(f"{last_alpha}-X{i+1:03d}")
-                        if debug and idx == processing_rows[0] and i == 0:  # 最初の補完だけデバッグ表示
-                            print(f"行 {idx+1}: 回路記号不足を補完: {final_symbols[-1]}")
                 elif symbol_count > qty:
                     # 超過分は最後から?をつける
                     final_symbols = final_symbols[:qty]
                     for i in range(symbol_count - qty):
                         if i < len(final_symbols):
                             final_symbols[qty-i-1] = final_symbols[qty-i-1] + "?"
-                            if debug and idx == processing_rows[0] and i == 0:  # 最初の修正だけデバッグ表示
-                                print(f"行 {idx+1}: 回路記号超過を修正: {final_symbols[qty-i-1]}")
                 
                 # メーカー情報を含める場合
                 if include_maker_info:
@@ -282,18 +237,12 @@ def extract_circuit_symbols(input_excel, assembly_number=None, use_all_assemblie
                     
                     # 回路記号リストに追加
                     circuit_symbols.extend(symbols_with_info)
-                    if debug and idx == processing_rows[0]:  # 最初の行だけデバッグ表示
-                        print(f"行 {idx+1}: メーカー情報を含めた回路記号を追加: {len(symbols_with_info)}個")
                 else:
                     # メーカー情報を含めない場合は、シンボルのみを追加
                     circuit_symbols.extend([s for s in final_symbols if s])  # 空文字列を除外
-                    if debug and idx == processing_rows[0]:  # 最初の行だけデバッグ表示
-                        print(f"行 {idx+1}: 回路記号を追加: {len([s for s in final_symbols if s])}個")
             
             # 全てのシンボルリストに追加
             all_circuit_symbols.extend(circuit_symbols)
-            if debug:
-                print(f"アセンブリ '{assembly_number}' から {len(circuit_symbols)} 個の回路記号を抽出しました")
         
         # 処理情報の更新
         info["processed_rows"] = total_processed_rows
@@ -302,14 +251,9 @@ def extract_circuit_symbols(input_excel, assembly_number=None, use_all_assemblie
         # 空文字列を削除
         all_circuit_symbols = [symbol for symbol in all_circuit_symbols if symbol]
         
-        if debug:
-            print(f"合計 {len(all_circuit_symbols)} 個の回路記号を抽出しました")
-        
         return all_circuit_symbols, info
         
     except Exception as e:
-        if debug:
-            print(f"エラー: {str(e)}")
-            traceback.print_exc()
+        traceback.print_exc()
         info["error"] = str(e)
         return [], info
