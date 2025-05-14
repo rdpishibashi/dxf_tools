@@ -1,7 +1,26 @@
 import ezdxf
 import re
 
-def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=False):
+def get_layers_from_dxf(dxf_file):
+    """
+    DXFファイルからレイヤー一覧を取得する
+    
+    Args:
+        dxf_file: DXFファイルパス
+        
+    Returns:
+        list: レイヤー名のリスト
+    """
+    try:
+        doc = ezdxf.readfile(dxf_file)
+        # レイヤーテーブルからすべてのレイヤー名を取得
+        layer_names = [layer.dxf.name for layer in doc.layers]
+        return sorted(layer_names)  # アルファベット順にソート
+    except Exception as e:
+        print(f"レイヤー一覧の取得中にエラーが発生しました: {str(e)}")
+        return []
+
+def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=False, selected_layers=None):
     """
     DXFファイルからテキストラベルを抽出する
     
@@ -10,6 +29,7 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
         filter_non_parts: 回路記号以外のラベルをフィルタリングするかどうか
         sort_order: ソート順 ("asc"=昇順, "desc"=降順, "none"=ソートなし)
         debug: デバッグ情報を表示するかどうか
+        selected_layers: 処理対象とするレイヤー名のリスト。Noneの場合は全レイヤーを対象とする
         
     Returns:
         tuple: (ラベルリスト, 情報辞書)
@@ -18,7 +38,9 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
     info = {
         "total_extracted": 0,
         "filtered_count": 0,
-        "final_count": 0
+        "final_count": 0,
+        "processed_layers": 0,
+        "total_layers": 0
     }
     
     try:
@@ -26,21 +48,35 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
         doc = ezdxf.readfile(dxf_file)
         msp = doc.modelspace()
         
-        # すべてのテキストエンティティを抽出
+        # 全レイヤー数を記録
+        all_layers = [layer.dxf.name for layer in doc.layers]
+        info["total_layers"] = len(all_layers)
+        
+        # 選択されたレイヤーの処理
+        if selected_layers is None:
+            # 選択されたレイヤーが指定されていない場合は全レイヤーを対象とする
+            selected_layers = all_layers
+        
+        # 処理対象のレイヤー数を記録
+        info["processed_layers"] = len(selected_layers)
+        
+        # すべてのテキストエンティティを抽出（選択されたレイヤーのみ）
         labels = []
         for e in msp:
             if e.dxftype() in ['TEXT', 'MTEXT']:
-                if e.dxftype() == 'TEXT':
-                    text = e.dxf.text
-                else:  # MTEXT
-                    text = e.text
-                
-                # フォーマットコードを削除
-                cleaned_text = re.sub(r'\\[A-Za-z0-9.]+;', '', text)
-                cleaned_text = cleaned_text.replace('\\P', ' ').strip()
-                
-                if cleaned_text:
-                    labels.append(cleaned_text)
+                # エンティティのレイヤーが選択されたレイヤーに含まれているか確認
+                if e.dxf.layer in selected_layers:
+                    if e.dxftype() == 'TEXT':
+                        text = e.dxf.text
+                    else:  # MTEXT
+                        text = e.text
+                    
+                    # フォーマットコードを削除
+                    cleaned_text = re.sub(r'\\[A-Za-z0-9.]+;', '', text)
+                    cleaned_text = cleaned_text.replace('\\P', ' ').strip()
+                    
+                    if cleaned_text:
+                        labels.append(cleaned_text)
         
         # 総抽出数を記録
         info["total_extracted"] = len(labels)

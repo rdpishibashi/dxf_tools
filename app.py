@@ -52,104 +52,152 @@ def main():
         ]
     )
 
-    if tool_selection == '図面ラベル抽出':
-        st.header('DXFファイルからラベルを抽出')
-        uploaded_file = st.file_uploader("DXFファイルをアップロード", type="dxf", key="label_extractor")
-        
-        # デフォルトのファイル名を設定
-        default_filename = "labels.txt"
-        if uploaded_file is not None:
-            default_filename = os.path.splitext(uploaded_file.name)[0] + ".txt"
-            
-        output_filename = st.text_input("出力ファイル名", default_filename)
-        if not output_filename.endswith('.txt'):
-            output_filename += '.txt'
-        
-        # 新しいオプション
-        col1, col2 = st.columns(2)
-        with col1:
-            filter_option = st.checkbox(
-                "回路記号（候補）のみ抽出", 
-                value=False, 
-                help="以下の条件に合致するラベルは回路記号でないと判断して除外します："
-                     "\n- 最初の文字が「(」（例：(BK), (M5)）"
-                     "\n- 最初の文字が数字（例：2.1+, 500DJ）"
-                     "\n- 英大文字だけで2文字以下（E, L, PE）"
-                     "\n- 英大文字１文字に続いて数字（例：R1, T2）"
-                     "\n- 英大文字１文字に続いて数字と「.」からなる文字列（例：L1.1, P01）"
-                     "\n- 英字と「+」もしくは「-」の組み合わせ（例：P+, VCC-）"
-                     "\n- 「GND」を含む（例：GND, GND(M4)）"
-                     "\n- 「AWG」ではじまるラベル（例：AWG14, AWG18）"
-                     "\n- 英小文字だけの単語と空白を複数含むラベル（例：on ..., to ...）"
-                     "\n- 「☆」ではじまるラベル"
-                     "\n- 「注」ではじまるラベル"
-                     "\n- ラベルの文字列中の「(」ではじまり「)」で閉じる文字列部分を削除"
-            )
-        
-        with col2:
-            sort_option = st.selectbox(
-                "並び替え", 
-                options=[
-                    ("昇順", "asc"), 
-                    ("逆順", "desc"),
-                    ("並び替えなし", "none")
-                ],
-                format_func=lambda x: x[0],
-                help="ラベルの並び替え順を指定します",
-                index=0  # デフォルトで昇順を選択
-            )
-            sort_value = sort_option[1]  # タプルの2番目の要素（実際の値）を取得
-            
-        debug_option = st.checkbox("デバッグ情報を表示", value=False, help="フィルタリングの詳細情報を表示します。")
-            
-        if uploaded_file is not None:
-            try:
-                # ファイルを一時ディレクトリに保存
-                temp_file = save_uploadedfile(uploaded_file)
-                
-                if st.button("ラベルを抽出"):
-                    with st.spinner('ラベルを抽出中...'):
-                        labels, info = extract_labels(
-                            temp_file, 
-                            filter_non_parts=filter_option, 
-                            sort_order=sort_value, 
-                            debug=debug_option
-                        )
-                        
-                        # 結果を表示
-                        st.subheader("抽出されたラベル")
-                        
-                        # 処理情報の表示
-                        st.info(f"元の抽出ラベル総数: {info['total_extracted']}")
-                        
-                        if filter_option:
-                            st.info(f"フィルタリングで除外したラベル数: {info['filtered_count']}")
-                        
-                        st.info(f"最終的なラベル数: {info['final_count']}")
-                        
-                        if sort_value != "none":
-                            sort_text = "昇順" if sort_value == "asc" else "逆順"
-                            st.info(f"ラベルを{sort_text}で並び替えました")
-                        
-                        # ラベル一覧
-                        st.text_area("ラベル一覧", "\n".join(labels), height=300)
-                        
-                        # ダウンロードボタンを作成
-                        if labels:
-                            txt_str = "\n".join(labels)
-                            st.download_button(
-                                label="テキストファイルをダウンロード",
-                                data=txt_str.encode('utf-8'),
-                                file_name=output_filename,
-                                mime="text/plain",
-                            )
-                    
-                    # 一時ファイルの削除
-                    os.unlink(temp_file)
-            
-            except Exception as e:
-                st.error(f"エラーが発生しました: {str(e)}")
-                st.error(traceback.format_exc())
+	if tool_selection == '図面ラベル抽出':
+	    st.header('DXFファイルからラベルを抽出')
+	    uploaded_file = st.file_uploader("DXFファイルをアップロード", type="dxf", key="label_extractor")
+	    
+	    # デフォルトのファイル名を設定
+	    default_filename = "labels.txt"
+	    if uploaded_file is not None:
+	        default_filename = os.path.splitext(uploaded_file.name)[0] + ".txt"
+	        
+	    output_filename = st.text_input("出力ファイル名", default_filename)
+	    if not output_filename.endswith('.txt'):
+	        output_filename += '.txt'
+	    
+	    # 新しいオプション
+	    col1, col2 = st.columns(2)
+	    with col1:
+	        filter_option = st.checkbox(
+	            "回路記号（候補）のみ抽出", 
+	            value=False, 
+	            help="以下の条件に合致するラベルは回路記号でないと判断して除外します："
+	                 "\n- 最初の文字が「(」（例：(BK), (M5)）"
+	                 "\n- 最初の文字が数字（例：2.1+, 500DJ）"
+	                 "\n- 英大文字だけで2文字以下（E, L, PE）"
+	                 "\n- 英大文字１文字に続いて数字（例：R1, T2）"
+	                 "\n- 英大文字１文字に続いて数字と「.」からなる文字列（例：L1.1, P01）"
+	                 "\n- 英字と「+」もしくは「-」の組み合わせ（例：P+, VCC-）"
+	                 "\n- 「GND」を含む（例：GND, GND(M4)）"
+	                 "\n- 「AWG」ではじまるラベル（例：AWG14, AWG18）"
+	                 "\n- 英小文字だけの単語と空白を複数含むラベル（例：on ..., to ...）"
+	                 "\n- 「☆」ではじまるラベル"
+	                 "\n- 「注」ではじまるラベル"
+	                 "\n- ラベルの文字列中の「(」ではじまり「)」で閉じる文字列部分を削除"
+	        )
+	    
+	    with col2:
+	        sort_option = st.selectbox(
+	            "並び替え", 
+	            options=[
+	                ("昇順", "asc"), 
+	                ("逆順", "desc"),
+	                ("並び替えなし", "none")
+	            ],
+	            format_func=lambda x: x[0],
+	            help="ラベルの並び替え順を指定します",
+	            index=0  # デフォルトで昇順を選択
+	        )
+	        sort_value = sort_option[1]  # タプルの2番目の要素（実際の値）を取得
+	        
+	    debug_option = st.checkbox("デバッグ情報を表示", value=False, help="フィルタリングの詳細情報を表示します。")
+	        
+	    if uploaded_file is not None:
+	        try:
+	            # ファイルを一時ディレクトリに保存
+	            temp_file = save_uploadedfile(uploaded_file)
+	            
+	            # レイヤー一覧を取得
+	            with st.spinner('レイヤー情報を読み込み中...'):
+	                layers = utils.extract_labels.get_layers_from_dxf(temp_file)
+	            
+	            if layers:
+	                st.subheader("レイヤー選択")
+	                
+	                # 全選択/全解除のトグルスイッチ
+	                col3, col4 = st.columns([1, 3])
+	                with col3:
+	                    select_all = st.button("全選択")
+	                    
+	                with col4:
+	                    deselect_all = st.button("全解除")
+	                
+	                # 各レイヤーのチェックボックス
+	                selected_layers = []
+	                
+	                # 3列表示に変更
+	                layer_cols = st.columns(3)
+	                
+	                for i, layer in enumerate(layers):
+	                    col_index = i % 3
+	                    with layer_cols[col_index]:
+	                        # 全選択/全解除ボタンが押された場合の処理
+	                        default_value = True
+	                        if 'layer_states' not in st.session_state:
+	                            st.session_state.layer_states = {layer: default_value for layer in layers}
+	                        
+	                        if select_all:
+	                            st.session_state.layer_states[layer] = True
+	                        elif deselect_all:
+	                            st.session_state.layer_states[layer] = False
+	                        
+	                        # チェックボックスを表示
+	                        is_selected = st.checkbox(layer, value=st.session_state.layer_states[layer], key=f"layer_{layer}")
+	                        st.session_state.layer_states[layer] = is_selected
+	                        
+	                        if is_selected:
+	                            selected_layers.append(layer)
+	            
+	            if st.button("ラベルを抽出"):
+	                if not layers or not selected_layers:
+	                    st.warning("レイヤーが選択されていないか、DXFファイルにレイヤーが存在しません。")
+	                else:
+	                    with st.spinner('ラベルを抽出中...'):
+	                        labels, info = extract_labels(
+	                            temp_file, 
+	                            filter_non_parts=filter_option, 
+	                            sort_order=sort_value, 
+	                            debug=debug_option,
+	                            selected_layers=selected_layers  # 選択されたレイヤーを渡す
+	                        )
+	                        
+	                        # 結果を表示
+	                        st.subheader("抽出されたラベル")
+	                        
+	                        # レイヤー処理情報の表示
+	                        st.info(f"処理対象レイヤー: {info['processed_layers']} / {info['total_layers']}")
+	                        
+	                        # 処理情報の表示
+	                        st.info(f"元の抽出ラベル総数: {info['total_extracted']}")
+	                        
+	                        if filter_option:
+	                            st.info(f"フィルタリングで除外したラベル数: {info['filtered_count']}")
+	                        
+	                        st.info(f"最終的なラベル数: {info['final_count']}")
+	                        
+	                        if sort_value != "none":
+	                            sort_text = "昇順" if sort_value == "asc" else "逆順"
+	                            st.info(f"ラベルを{sort_text}で並び替えました")
+	                        
+	                        # ラベル一覧
+	                        st.text_area("ラベル一覧", "\n".join(labels), height=300)
+	                        
+	                        # ダウンロードボタンを作成
+	                        if labels:
+	                            txt_str = "\n".join(labels)
+	                            st.download_button(
+	                                label="テキストファイルをダウンロード",
+	                                data=txt_str.encode('utf-8'),
+	                                file_name=output_filename,
+	                                mime="text/plain",
+	                            )
+	                
+	                # 一時ファイルの削除
+	                os.unlink(temp_file)
+	        
+	        except Exception as e:
+	            st.error(f"エラーが発生しました: {str(e)}")
+	            st.error(traceback.format_exc())
 
     elif tool_selection == '構造分析（Excel出力）':
         st.header('DXFデータ構造を分析しExcelファイルに出力')
