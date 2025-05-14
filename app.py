@@ -7,7 +7,7 @@ import sys
 import traceback
 
 # モジュールのインポート
-from utils.extract_labels import extract_labels
+from utils.extract_labels import extract_labels, get_layers_from_dxf
 from utils.analyze_structure import analyze_dxf_structure, get_default_output_filename
 from utils.extract_hierarchy import extract_hierarchy
 from utils.compare_dxf import compare_dxf_files_and_generate_dxf
@@ -52,7 +52,7 @@ def main():
         ]
     )
 
-	if tool_selection == '図面ラベル抽出':
+    if tool_selection == '図面ラベル抽出':
 	    st.header('DXFファイルからラベルを抽出')
 	    uploaded_file = st.file_uploader("DXFファイルをアップロード", type="dxf", key="label_extractor")
 	    
@@ -109,7 +109,7 @@ def main():
 	            
 	            # レイヤー一覧を取得
 	            with st.spinner('レイヤー情報を読み込み中...'):
-	                layers = utils.extract_labels.get_layers_from_dxf(temp_file)
+	                layers = get_layers_from_dxf(temp_file)
 	            
 	            if layers:
 	                st.subheader("レイヤー選択")
