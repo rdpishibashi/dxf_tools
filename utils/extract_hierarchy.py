@@ -70,6 +70,9 @@ def extract_hierarchy(dxf_file):
 
     # HEADER
     hierarchy.append("## SECTION: HEADER")
+    for varname in doc.header.varnames():
+        value = doc.header.get(varname)
+        hierarchy.append(f"- {varname}: {value}")
 
     # TABLES
     hierarchy.append("## SECTION: TABLES")

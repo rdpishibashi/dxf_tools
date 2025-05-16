@@ -53,6 +53,7 @@ def extract_entity_data(section_name, entity):
         if code_line.isdigit():
             code = int(code_line)
             meaning = get_group_code_meaning(code)
+            # code は整数型のまま保存
             rows.append([section_name, entity_type, code, meaning, value_line])
 
     return rows
@@ -71,7 +72,8 @@ def extract_table_data(section_name, table_entry):
     rows = []
     entry_type = table_entry.dxftype()
     for key, value in table_entry.dxf.all_existing_dxf_attribs().items():
-        rows.append([section_name, entry_type, "-", "TABLE Entry", f"{key} = {value}"])
+        # ここでは GroupCode を文字列 "N/A" として保存（一貫性を保つため）
+        rows.append([section_name, entry_type, "N/A", "TABLE Entry", f"{key} = {value}"])
     return rows
 
 def analyze_dxf_structure(dxf_file):
@@ -118,7 +120,7 @@ def analyze_dxf_structure(dxf_file):
         all_rows.extend(extract_entity_data('OBJECTS', obj))
 
     # CLASSES コメント行
-    all_rows.append(['CLASSES', 'INFO', '', '', 'CLASSES セクションは存在すればファイル内に含まれます'])
+    all_rows.append(['CLASSES', 'INFO', "N/A", '', 'CLASSES セクションは存在すればファイル内に含まれます'])
 
     return all_rows
 

@@ -89,44 +89,64 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
             for label in labels:
                 # フィルタリング条件
                 is_filtered = False
+                reason = ""
                 
-                # 括弧内の部分を一時的に削除するための正規表現
-                temp_label = re.sub(r'\([^)]*\)', '', label).strip()
+                # 空白を含むかどうかをチェック
+                if ' ' in label:
+                    # 次の条件のいずれかに該当する場合にフィルタリング
+                    
+                    # 1. 空白を含み、英数字のみで構成されているラベル
+                    if re.match(r'^[A-Za-z0-9 ]+$', label):
+                        is_filtered = True
+                        reason = "空白を含む英数字のみのラベル"
+                    
+                    # 2. 空白を含み、単語や短い説明のようなラベル
+                    # 単語間にスペースがあり、記号が少ないもの（一般的な説明テキスト）
+                    words = label.split()
+                    if len(words) > 1:
+                        # 括弧や記号を除いた部分の長さを計算
+                        clean_part = re.sub(r'[^\w\s]', '', label)
+                        special_chars = [c for c in label if not (c.isalnum() or c.isspace())]
+                        
+                        # 記号が少ない（全体の25%未満）または一般的な記号パターン（括弧など）
+                        if len(special_chars) < len(label) * 0.25 or '(' in label:
+                            # 最初の単語が "to" や短い場合
+                            if len(words[0]) <= 3 or words[0].lower() == 'to' or words[0].lower() == 'on':
+                                is_filtered = True
+                                reason = "説明的なテキスト"
                 
-                # 以下の条件に合致するラベルは回路記号でないと判断
-                if re.match(r'^\(', label):  # (BK), (M5) など
-                    is_filtered = True
-                    reason = "括弧で始まる"
-                elif re.match(r'^\d', label):  # 2.1+, 500DJ など
-                    is_filtered = True
-                    reason = "数字で始まる"
-                elif re.match(r'^[A-Z]{1,2}$', label):  # E, L, PE など
-                    is_filtered = True
-                    reason = "英大文字だけで2文字以下"
-                elif re.match(r'^[A-Z]\d+$', label):  # R1, T2 など
-                    is_filtered = True
-                    reason = "英大文字1文字に続いて数字"
-                elif re.match(r'^[A-Z]\d+\.\d+$', label):  # L1.1, P01 など
-                    is_filtered = True
-                    reason = "英大文字1文字に続いて数字と「.」からなる文字列"
-                elif re.match(r'^[A-Za-z]+[\+\-]$', label):  # P+, VCC- など
-                    is_filtered = True
-                    reason = "英字と「+」もしくは「-」の組み合わせ"
-                elif 'GND' in label:  # GND, GND(M4) など
-                    is_filtered = True
-                    reason = "「GND」を含む"
-                elif label.startswith('AWG'):  # AWG14, AWG18 など
-                    is_filtered = True
-                    reason = "「AWG」ではじまる"
-                elif re.match(r'^[a-z]+( [a-z]+)+$', label):  # on ..., to ... など
-                    is_filtered = True
-                    reason = "英小文字だけの単語と空白を複数含む"
-                elif label.startswith('☆'):
-                    is_filtered = True
-                    reason = "「☆」ではじまる"
-                elif label.startswith('注'):
-                    is_filtered = True
-                    reason = "「注」ではじまる"
+                # その他のフィルタリング条件
+                if not is_filtered:
+                    if re.match(r'^\(', label):  # (BK), (M5) など
+                        is_filtered = True
+                        reason = "括弧で始まる"
+                    elif re.match(r'^\d', label):  # 2.1+, 500DJ など
+                        is_filtered = True
+                        reason = "数字で始まる"
+                    elif re.match(r'^[A-Z]{1,2}$', label):  # E, L, PE など
+                        is_filtered = True
+                        reason = "英大文字だけで2文字以下"
+                    elif re.match(r'^[A-Z]\d+$', label):  # R1, T2 など
+                        is_filtered = True
+                        reason = "英大文字1文字に続いて数字"
+                    elif re.match(r'^[A-Z]\d+\.\d+$', label):  # L1.1, P01 など
+                        is_filtered = True
+                        reason = "英大文字1文字に続いて数字と「.」からなる文字列"
+                    elif re.match(r'^[A-Za-z]+[\+\-]$', label):  # P+, VCC- など
+                        is_filtered = True
+                        reason = "英字と「+」もしくは「-」の組み合わせ"
+                    elif 'GND' in label:  # GND, GND(M4) など
+                        is_filtered = True
+                        reason = "「GND」を含む"
+                    elif label.startswith('AWG'):  # AWG14, AWG18 など
+                        is_filtered = True
+                        reason = "「AWG」ではじまる"
+                    elif label.startswith('☆'):
+                        is_filtered = True
+                        reason = "「☆」ではじまる"
+                    elif label.startswith('注'):
+                        is_filtered = True
+                        reason = "「注」ではじまる"
                 
                 if is_filtered:
                     if debug:
