@@ -71,8 +71,10 @@ def app():
         )
     else:
         output_format = "個別ファイル"
-            
-    debug_option = st.checkbox("デバッグ情報を表示", value=False, help="フィルタリングの詳細情報を表示します。")
+    
+    # 「デバッグ情報を表示」オプションを削除
+    # デバッグ用途はfalseに固定
+    debug_option = False
     
     # 結果表示用のセッション状態を初期化
     if 'label_results' not in st.session_state:
@@ -269,7 +271,7 @@ def app():
                                 file_path, 
                                 filter_non_parts=filter_option, 
                                 sort_order=sort_value, 
-                                debug=debug_option,
+                                debug=debug_option,  # デバッグオプションはfalseに固定
                                 selected_layers=selected_layers
                             )
                             
