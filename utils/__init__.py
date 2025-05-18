@@ -4,7 +4,7 @@
 # 特に何も実装する必要はありません
 
 # ただし、利便性のために各モジュールの主要な関数をパッケージレベルでエクスポートします
-from .extract_labels import extract_labels, get_layers_from_dxf
+from .extract_labels import extract_labels, get_layers_from_dxf, process_multiple_dxf_files
 from .analyze_structure import analyze_dxf_structure, get_default_output_filename
 from .extract_hierarchy import extract_hierarchy
 from .compare_dxf import compare_dxf_files_and_generate_dxf

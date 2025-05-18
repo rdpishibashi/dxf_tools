@@ -1,5 +1,6 @@
 import ezdxf
 import re
+import os
 
 def get_layers_from_dxf(dxf_file):
     """
@@ -40,7 +41,8 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
         "filtered_count": 0,
         "final_count": 0,
         "processed_layers": 0,
-        "total_layers": 0
+        "total_layers": 0,
+        "filename": os.path.basename(dxf_file)
     }
     
     try:
@@ -180,4 +182,37 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
         
     except Exception as e:
         print(f"エラー: {str(e)}")
+        info["error"] = str(e)
         return [], info
+
+def process_multiple_dxf_files(dxf_files, filter_non_parts=False, sort_order="asc", debug=False, selected_layers=None):
+    """
+    複数のDXFファイルからラベルを抽出する
+    
+    Args:
+        dxf_files: DXFファイルパスのリスト
+        filter_non_parts: 回路記号以外のラベルをフィルタリングするかどうか
+        sort_order: ソート順 ("asc"=昇順, "desc"=降順, "none"=ソートなし)
+        debug: デバッグ情報を表示するかどうか
+        selected_layers: 処理対象とするレイヤー名のリスト。Noneの場合は全レイヤーを対象とする
+        
+    Returns:
+        dict: ファイルパスをキー、(ラベルリスト, 情報辞書)をバリューとする辞書
+    """
+    results = {}
+    
+    for dxf_file in dxf_files:
+        # ディレクトリの場合は、中のDXFファイルを処理
+        if os.path.isdir(dxf_file):
+            for root, _, files in os.walk(dxf_file):
+                for file in files:
+                    if file.lower().endswith('.dxf'):
+                        file_path = os.path.join(root, file)
+                        labels, info = extract_labels(file_path, filter_non_parts, sort_order, debug, selected_layers)
+                        results[file_path] = (labels, info)
+        # 単一のDXFファイルの場合
+        elif os.path.isfile(dxf_file) and dxf_file.lower().endswith('.dxf'):
+            labels, info = extract_labels(dxf_file, filter_non_parts, sort_order, debug, selected_layers)
+            results[dxf_file] = (labels, info)
+    
+    return results
