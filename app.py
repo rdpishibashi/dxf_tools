@@ -207,308 +207,330 @@ def main():
 	            st.error(traceback.format_exc())
 
     elif tool_selection == '構造分析（Excel出力）':
-        st.header('DXFデータ構造を分析しExcelファイルに出力')
-        uploaded_file = st.file_uploader("DXFファイルをアップロード", type="dxf", key="structure_analyzer")
-        
-        # デフォルトのファイル名を設定
-        default_filename = "structure.xlsx"
-        if uploaded_file is not None:
-            default_filename = get_default_output_filename(uploaded_file.name, 'xlsx')
-        
-        output_filename = st.text_input("出力ファイル名", default_filename)
-        if not output_filename.endswith('.xlsx') and not output_filename.endswith('.csv'):
-            output_filename += '.xlsx'
-        
-        # セクション分割オプション
-        use_split = st.checkbox("セクションごとに分割して保存", value=False, 
-                              help="ONにすると、HEADER, BLOCKS, ENTITIES などのセクションごとに別ファイルに分割されます。")
-        
-        # CSV強制オプション
-        use_csv = st.checkbox("CSV形式で保存", value=False, 
-                            help="ONにすると、Excel形式ではなくCSV形式で保存されます。")
-        
-        if uploaded_file is not None:
-            try:
-                # ファイルを一時ディレクトリに保存
-                temp_file = save_uploadedfile(uploaded_file)
-                
-                if st.button("構造を分析"):
-                    # セッションステートに保存して分析結果を保持
-                    if 'structure_data' not in st.session_state:
-                        st.session_state.structure_data = None
-                    if 'structure_sections' not in st.session_state:
-                        st.session_state.structure_sections = None
-                    if 'structure_df' not in st.session_state:
-                        st.session_state.structure_df = None
+            st.header('DXFデータ構造を分析しExcelファイルに出力')
+            uploaded_file = st.file_uploader("DXFファイルをアップロード", type="dxf", key="structure_analyzer")
+            
+            # デフォルトのファイル名を設定
+            default_filename = "structure.xlsx"
+            if uploaded_file is not None:
+                default_filename = get_default_output_filename(uploaded_file.name, 'xlsx')
                     
-                    with st.spinner('DXFデータ構造を分析中...'):
-                        data = analyze_dxf_structure(temp_file)
-                        # 全ての列が適切なデータ型であることを確認
-                        df = pd.DataFrame(data, columns=['Section', 'Entity', 'GroupCode', 'GroupCode Definition', 'Value'])
-                        
-                        # GroupCode 列のデータ型を確認して、必要に応じて文字列に変換
-                        df['GroupCode'] = df['GroupCode'].astype(str)
-                        
-                        # セッションステートに保存
-                        st.session_state.structure_data = data
-                        st.session_state.structure_df = df
-                        
-                        # セクション情報を取得して保存
-                        sections = df['Section'].unique()
-                        st.session_state.structure_sections = sections
-                        
-                        # 結果をデータフレームとして表示
-                        st.subheader("構造分析結果")
-                        st.dataframe(df, height=400)
-                        
-                        # データのサイズをチェック
-                        row_count = len(df)
-                        st.info(f"抽出されたデータ: {row_count} 行")
-                        
-                        # Excel行数制限をチェック
-                        EXCEL_ROW_LIMIT = 1000000
-                        if row_count > EXCEL_ROW_LIMIT and not use_csv:
-                            st.warning(f"データが大きすぎるため ({row_count} 行 > {EXCEL_ROW_LIMIT} 行制限)、Excel形式での保存が難しい場合があります。CSV形式での保存をお勧めします。")
+            output_filename = st.text_input("出力ファイル名", default_filename)
+            if not output_filename.endswith('.xlsx') and not output_filename.endswith('.csv'):
+                output_filename += '.xlsx'
+            
+            # セクション分割オプション
+            use_split = st.checkbox("セクションごとに分割して保存", value=False, 
+                                  help="ONにすると、HEADER, BLOCKS, ENTITIES などのセクションごとに別ファイルに分割されます。")
+            
+            # CSV強制オプション
+            use_csv = st.checkbox("CSV形式で保存", value=False, 
+                                help="ONにすると、Excel形式ではなくCSV形式で保存されます。")
                     
-                    # 一時ファイルの削除
-                    os.unlink(temp_file)
-                
-                # 分析結果が存在する場合、ダウンロードオプションを表示
-                if hasattr(st.session_state, 'structure_df') and st.session_state.structure_df is not None:
-                    df = st.session_state.structure_df
+            if uploaded_file is not None:
+                try:
+                    # ファイルを一時ディレクトリに保存
+                    temp_file = save_uploadedfile(uploaded_file)
                     
-                    # 出力形式を決定
-                    file_ext = os.path.splitext(output_filename)[1].lower()
-                    is_csv_output = use_csv or file_ext == '.csv' or len(df) > 1000000  # Excel行数制限
+                    if st.button("構造を分析"):
+                        # セッションステートに保存して分析結果を保持
+                        if 'structure_data' not in st.session_state:
+                            st.session_state.structure_data = None
+                        if 'structure_sections' not in st.session_state:
+                            st.session_state.structure_sections = None
+                        if 'structure_df' not in st.session_state:
+                            st.session_state.structure_df = None
+                        
+                        with st.spinner('DXFデータ構造を分析中...'):
+                            data = analyze_dxf_structure(temp_file)
+                            # 全ての列が適切なデータ型であることを確認
+                            df = pd.DataFrame(data, columns=['Section', 'Entity Marker', 'Entity', 'GroupCode', 'GroupCode Definition', 'Value'])
+                            
+                            # GroupCode 列のデータ型を確認して、必要に応じて文字列に変換
+                            df['GroupCode'] = df['GroupCode'].astype(str)
+                            
+                            # セッションステートに保存
+                            st.session_state.structure_data = data
+                            st.session_state.structure_df = df
+                            
+                            # セクション情報を取得して保存
+                            sections = df['Section'].unique()
+                            st.session_state.structure_sections = sections
+                            
+                            # 結果をデータフレームとして表示
+                            st.subheader("構造分析結果")
+                            st.dataframe(df, height=400)
+                            
+                            # データのサイズをチェック
+                            row_count = len(df)
+                            st.info(f"抽出されたデータ: {row_count} 行")
+                            
+                            # Excel行数制限をチェック
+                            EXCEL_ROW_LIMIT = 1000000
+                            if row_count > EXCEL_ROW_LIMIT and not use_csv:
+                                st.warning(f"データが大きすぎるため ({row_count} 行 > {EXCEL_ROW_LIMIT} 行制限)、Excel形式での保存が難しい場合があります。CSV形式での保存をお勧めします。")
+                        
+                        # 一時ファイルの削除
+                        os.unlink(temp_file)
                     
-                    if use_split:
-                        # セクションごとに分割して保存
-                        st.subheader("セクション選択")
-                        st.info("選択したセクションをまとめてダウンロードします。2つ以上選択するとZIPアーカイブになります。")
+                    # 分析結果が存在する場合、ダウンロードオプションを表示
+                    if hasattr(st.session_state, 'structure_df') and st.session_state.structure_df is not None:
+                        df = st.session_state.structure_df
                         
-                        # セクション情報を取得
-                        sections = st.session_state.structure_sections
+                        # 出力形式を決定
+                        file_ext = os.path.splitext(output_filename)[1].lower()
+                        is_csv_output = use_csv or file_ext == '.csv' or len(df) > 1000000  # Excel行数制限
                         
-                        # セクション選択用のチェックボックス（デフォルトですべてON）
-                        col1, col2 = st.columns([1, 3])
-                        
-                        with col1:
-                            select_all = st.button("全選択")
-                        
-                        with col2:
-                            deselect_all = st.button("全解除")
-                        
-                        # セッションステートでチェックボックスの状態を管理
-                        if 'section_states' not in st.session_state:
-                            st.session_state.section_states = {section: True for section in sections}
-                        
-                        if select_all:
-                            for section in sections:
-                                st.session_state.section_states[section] = True
-                        
-                        if deselect_all:
-                            for section in sections:
-                                st.session_state.section_states[section] = False
-                        
-                        # セクション選択用チェックボックスを3列で表示
-                        section_cols = st.columns(3)
-                        
-                        selected_sections = {}
-                        for i, section in enumerate(sections):
-                            col_index = i % 3
-                            with section_cols[col_index]:
-                                selected = st.checkbox(
-                                    f"{section}", 
-                                    value=st.session_state.section_states.get(section, True),
-                                    key=f"section_{section}"
-                                )
-                                selected_sections[section] = selected
-                                st.session_state.section_states[section] = selected
-                        
-                        # 選択されたセクションのリスト
-                        sections_to_download = [section for section, selected in selected_sections.items() if selected]
-                        
-                        if sections_to_download:
-                            # ダウンロードセクション
+                        if use_split:
+                            # セクションごとに分割して保存
+                            st.subheader("セクション選択")
+                            st.info("選択したセクションをまとめてダウンロードします。2つ以上選択するとZIPアーカイブになります。")
+                            
+                            # セクション情報を取得
+                            sections = st.session_state.structure_sections
+                            
+                            # セクション選択用のチェックボックス（デフォルトですべてON）
+                            col1, col2 = st.columns([1, 3])
+                            
+                            with col1:
+                                select_all = st.button("全選択")
+                            
+                            with col2:
+                                deselect_all = st.button("全解除")
+                            
+                            # セッションステートでチェックボックスの状態を管理
+                            if 'section_states' not in st.session_state:
+                                st.session_state.section_states = {section: True for section in sections}
+                            
+                            if select_all:
+                                for section in sections:
+                                    st.session_state.section_states[section] = True
+                            
+                            if deselect_all:
+                                for section in sections:
+                                    st.session_state.section_states[section] = False
+                            
+                            # セクション選択用チェックボックスを3列で表示
+                            section_cols = st.columns(3)
+                            
+                            selected_sections = {}
+                            for i, section in enumerate(sections):
+                                col_index = i % 3
+                                with section_cols[col_index]:
+                                    selected = st.checkbox(
+                                        f"{section}", 
+                                        value=st.session_state.section_states.get(section, True),
+                                        key=f"section_{section}"
+                                    )
+                                    selected_sections[section] = selected
+                                    st.session_state.section_states[section] = selected
+                            
+                            # 選択されたセクションのリスト
+                            sections_to_download = [section for section, selected in selected_sections.items() if selected]
+                            
+                            if sections_to_download:
+                                # ダウンロードセクション
+                                st.subheader("ダウンロード")
+                                
+                                # ファイル形式表示
+                                file_format = "CSV" if is_csv_output else "Excel"
+                                base_name = os.path.splitext(output_filename)[0]
+                                
+                                # 選択セクション数を表示
+                                st.info(f"選択されたセクション: {len(sections_to_download)}/{len(sections)}")
+                                
+                                # 一括ダウンロード処理
+                                if len(sections_to_download) > 0:
+                                    if len(sections_to_download) == 1:
+                                        # 1つのセクションのみの場合は単一ファイルでダウンロード
+                                        section = sections_to_download[0]
+                                        section_safe = section.replace('(', '_').replace(')', '').replace(' ', '_')
+                                        
+                                        if is_csv_output:
+                                            section_filename = f"{base_name}_{section_safe}.csv"
+                                            # ダウンロードボタンが押されたらCSVを生成してダウンロード
+                                            download_button_key = f"csv_dl_{section_safe}"
+                                            
+                                            # 単一ボタンでCSVファイルを生成・ダウンロード
+                                            if st.download_button(
+                                                label=f"{section} - CSVファイルをダウンロード",
+                                                data=df[df['Section'] == section].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'),
+                                                file_name=section_filename,
+                                                mime="text/csv",
+                                                key=download_button_key
+                                            ):
+                                                st.success(f"{section}のCSVファイルをダウンロードしました")
+                                        else:
+                                            section_filename = f"{base_name}_{section_safe}.xlsx"
+                                            
+                                            # Excelファイルを生成
+                                            try:
+                                                section_df = df[df['Section'] == section]
+                                                output = io.BytesIO()
+                                                
+                                                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                                                    section_df.to_excel(writer, index=False, sheet_name=f'{section}'[:31])  # シート名の長さ制限
+                                                
+                                                # 単一ボタンでExcelファイルをダウンロード
+                                                if st.download_button(
+                                                    label=f"{section} - Excelファイルをダウンロード",
+                                                    data=output.getvalue(),
+                                                    file_name=section_filename,
+                                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                                    key=f"excel_dl_{section_safe}"
+                                                ):
+                                                    st.success(f"{section}のExcelファイルをダウンロードしました")
+                                            except Exception as e:
+                                                st.error(f"Excelファイルの作成中にエラーが発生しました: {str(e)}")
+                                                # エラー時にはCSVでの代替方法を提供
+                                                alt_section_filename = f"{base_name}_{section_safe}.csv"
+                                                if st.download_button(
+                                                    label=f"{section} - 代替CSVファイルをダウンロード",
+                                                    data=df[df['Section'] == section].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'),
+                                                    file_name=alt_section_filename,
+                                                    mime="text/csv",
+                                                    key=f"alt_csv_dl_{section_safe}"
+                                                ):
+                                                    st.success(f"{section}のCSVファイルをダウンロードしました")
+                                    else:
+                                        # 複数のセクションが選択されている場合はZIPアーカイブを作成
+                                        # ZIPファイル名を設定
+                                        zip_filename = f"{base_name}_sections.zip"
+                                        
+                                        # ZIPアーカイブ生成とダウンロードを1ステップで行う
+                                        if st.button(f"選択した {len(sections_to_download)} セクションをZIPアーカイブで作成・ダウンロード"):
+                                            # ボタン押下時にZIPアーカイブを作成
+                                            import zipfile
+                                            
+                                            # 進捗表示のコンテナ
+                                            progress_container = st.container()
+                                            
+                                            # ステータスバーの表示
+                                            with progress_container:
+                                                status_text = st.empty()
+                                                progress_bar = st.progress(0)
+                                                status_text.text("ZIPアーカイブの作成を開始します...")
+                                            
+                                            try:
+                                                # ZIPファイル用のメモリバッファを作成
+                                                zip_buffer = io.BytesIO()
+                                                
+                                                # ZIPファイルを作成
+                                                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                                                    for i, section in enumerate(sections_to_download):
+                                                        # 進捗状況の更新
+                                                        progress = (i + 1) / len(sections_to_download)
+                                                        progress_bar.progress(progress)
+                                                        status_text.text(f"処理中... {i+1}/{len(sections_to_download)}: {section}")
+                                                        
+                                                        # セクションデータの取得
+                                                        section_df = df[df['Section'] == section]
+                                                        
+                                                        # セクション名から括弧などを取り除いてファイル名に適した形式に変換
+                                                        section_safe = section.replace('(', '_').replace(')', '').replace(' ', '_')
+                                                        
+                                                        if is_csv_output:
+                                                            # CSVファイルを作成
+                                                            section_filename = f"{base_name}_{section_safe}.csv"
+                                                            csv_data = section_df.to_csv(index=False, encoding='utf-8-sig')
+                                                            zf.writestr(section_filename, csv_data)
+                                                        else:
+                                                            # Excelファイルを作成
+                                                            section_filename = f"{base_name}_{section_safe}.xlsx"
+                                                            excel_buffer = io.BytesIO()
+                                                            try:
+                                                                with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                                                                    section_df.to_excel(writer, index=False, sheet_name=f'{section}'[:31])
+                                                                excel_buffer.seek(0)
+                                                                zf.writestr(section_filename, excel_buffer.getvalue())
+                                                            except Exception as e:
+                                                                # Excel保存に失敗した場合はCSVとして保存
+                                                                status_text.warning(f"セクション '{section}' のExcelファイル作成に失敗しました。CSV形式で保存します。")
+                                                                csv_filename = f"{base_name}_{section_safe}.csv"
+                                                                csv_data = section_df.to_csv(index=False, encoding='utf-8-sig')
+                                                                zf.writestr(csv_filename, csv_data)
+                                                
+                                                # 進捗表示を完了状態にする
+                                                progress_bar.progress(1.0)
+                                                status_text.text("ZIPアーカイブの作成が完了しました！")
+                                                
+                                                # ZIPファイルのダウンロードを自動的に行う
+                                                st.success(f"ZIPアーカイブを作成しました（{len(sections_to_download)}個のファイルが含まれています）")
+                                                
+                                                # ダウンロードボタンを表示（直接ダウンロードさせる）
+                                                st.download_button(
+                                                    label="ZIPアーカイブをダウンロード",
+                                                    data=zip_buffer.getvalue(),
+                                                    file_name=zip_filename,
+                                                    mime="application/zip",
+                                                    key="zip_download"
+                                                )
+                                            except Exception as e:
+                                                st.error(f"ZIPアーカイブ作成中にエラーが発生しました: {str(e)}")
+                                                st.error(traceback.format_exc())
+                            else:
+                                st.warning("ダウンロードするセクションを選択してください。")
+                        else:
+                            # 全データを1つのファイルに保存
                             st.subheader("ダウンロード")
                             
-                            # ファイル形式表示
-                            file_format = "CSV" if is_csv_output else "Excel"
-                            base_name = os.path.splitext(output_filename)[0]
-                            
-                            # 選択セクション数を表示
-                            st.info(f"選択されたセクション: {len(sections_to_download)}/{len(sections)}")
-                            
-                            # 一括ダウンロード処理
-                            if len(sections_to_download) > 0:
-                                if len(sections_to_download) == 1:
-                                    # 1つのセクションのみの場合は単一ファイルでダウンロード
-                                    section = sections_to_download[0]
-                                    section_safe = section.replace('(', '_').replace(')', '').replace(' ', '_')
+                            if is_csv_output:
+                                # CSV形式で保存 - 直接ダウンロードボタンを表示
+                                csv_filename = output_filename if output_filename.endswith('.csv') else os.path.splitext(output_filename)[0] + '.csv'
+                                csv_data = df.to_csv(index=False, encoding='utf-8-sig')
+                                
+                                # 1ステップでCSVファイルをダウンロード
+                                if st.download_button(
+                                    label="CSVファイルをダウンロード",
+                                    data=csv_data.encode('utf-8-sig'),
+                                    file_name=csv_filename,
+                                    mime="text/csv",
+                                    key="csv_download_all"
+                                ):
+                                    st.success("CSVファイルをダウンロードしました")
+                            else:
+                                # Excel形式で保存
+                                excel_filename = output_filename if output_filename.endswith('.xlsx') else os.path.splitext(output_filename)[0] + '.xlsx'
+                                
+                                # データサイズが大きい場合は警告
+                                if len(df) > 1000000:
+                                    st.warning("データサイズが大きいため、Excel形式での保存に失敗する可能性があります。CSV形式での保存をお勧めします。")
+                                
+                                try:
+                                    # Excelファイルを生成
+                                    output = io.BytesIO()
+                                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                                        df.to_excel(writer, index=False, sheet_name='DXF構造')
                                     
-                                    if is_csv_output:
-                                        section_filename = f"{base_name}_{section_safe}.csv"
-                                        
-                                        # 「CSV形式でダウンロード」ボタンが押されたときにファイルを生成
-                                        if st.button(f"{section} - CSVファイルをダウンロード"):
-                                            with st.spinner(f"{section} のCSVファイルを生成中..."):
-                                                section_df = df[df['Section'] == section]
-                                                section_rows = len(section_df)
-                                                output = section_df.to_csv(index=False, encoding='utf-8-sig')
-                                                
-                                                # ダウンロードリンクの生成
-                                                st.success(f"{section} ({section_rows} 行) のCSVファイルが生成されました")
-                                                st.markdown(
-                                                    create_download_link(
-                                                        output.encode('utf-8-sig'),
-                                                        section_filename,
-                                                        "CSVファイルをダウンロード"
-                                                    ),
-                                                    unsafe_allow_html=True
-                                                )
-                                    else:
-                                        section_filename = f"{base_name}_{section_safe}.xlsx"
-                                        
-                                        # 「Excel形式でダウンロード」ボタンが押されたときにファイルを生成
-                                        if st.button(f"{section} - Excelファイルをダウンロード"):
-                                            with st.spinner(f"{section} のExcelファイルを生成中..."):
-                                                try:
-                                                    section_df = df[df['Section'] == section]
-                                                    section_rows = len(section_df)
-                                                    output = io.BytesIO()
-                                                    
-                                                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                                                        section_df.to_excel(writer, index=False, sheet_name=f'{section}'[:31])  # シート名の長さ制限
-                                                    
-                                                    # ダウンロードリンクの生成
-                                                    st.success(f"{section} ({section_rows} 行) のExcelファイルが生成されました")
-                                                    st.download_button(
-                                                        label="Excelファイルをダウンロード",
-                                                        data=output.getvalue(),
-                                                        file_name=section_filename,
-                                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                                    )
-                                                except Exception as e:
-                                                    st.error(f"Excelファイルの作成中にエラーが発生しました: {str(e)}")
-                                                    st.info("CSV形式で保存してください。")
-                                else:
-                                    # 複数のセクションが選択されている場合はZIPアーカイブを作成
-                                    # ダウンロードボタンを表示
-                                    zip_filename = f"{base_name}_sections.zip"
+                                    # 1ステップでExcelファイルをダウンロード
+                                    if st.download_button(
+                                        label="Excelファイルをダウンロード",
+                                        data=output.getvalue(),
+                                        file_name=excel_filename,
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        key="excel_download_all"
+                                    ):
+                                        st.success("Excelファイルをダウンロードしました")
+                                except Exception as e:
+                                    st.error(f"Excelファイルの作成中にエラーが発生しました: {str(e)}")
                                     
-                                    if st.button(f"選択した {len(sections_to_download)} セクションをZIPアーカイブでダウンロード"):
-                                        # ボタン押下時にのみZIPアーカイブを作成
-                                        import zipfile
-                                        
-                                        # ステータスバーの表示
-                                        status_text = st.empty()
-                                        progress_bar = st.progress(0)
-                                        status_text.text("ZIPアーカイブの作成を開始します...")
-                                        
-                                        try:
-                                            # ZIPファイル用のメモリバッファを作成
-                                            zip_buffer = io.BytesIO()
-                                            
-                                            # ZIPファイルを作成
-                                            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-                                                for i, section in enumerate(sections_to_download):
-                                                    # 進捗状況の更新
-                                                    progress = (i + 1) / len(sections_to_download)
-                                                    progress_bar.progress(progress)
-                                                    status_text.text(f"処理中... {i+1}/{len(sections_to_download)}: {section}")
-                                                    
-                                                    # セクションデータの取得
-                                                    section_df = df[df['Section'] == section]
-                                                    
-                                                    # セクション名から括弧などを取り除いてファイル名に適した形式に変換
-                                                    section_safe = section.replace('(', '_').replace(')', '').replace(' ', '_')
-                                                    
-                                                    if is_csv_output:
-                                                        # CSVファイルを作成
-                                                        section_filename = f"{base_name}_{section_safe}.csv"
-                                                        csv_data = section_df.to_csv(index=False, encoding='utf-8-sig')
-                                                        zf.writestr(section_filename, csv_data)
-                                                    else:
-                                                        # Excelファイルを作成
-                                                        section_filename = f"{base_name}_{section_safe}.xlsx"
-                                                        excel_buffer = io.BytesIO()
-                                                        try:
-                                                            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                                                                section_df.to_excel(writer, index=False, sheet_name=f'{section}'[:31])
-                                                            excel_buffer.seek(0)
-                                                            zf.writestr(section_filename, excel_buffer.getvalue())
-                                                        except Exception as e:
-                                                            # Excel保存に失敗した場合はCSVとして保存
-                                                            st.warning(f"セクション '{section}' のExcelファイル作成に失敗しました。CSV形式で保存します。")
-                                                            csv_filename = f"{base_name}_{section_safe}.csv"
-                                                            csv_data = section_df.to_csv(index=False, encoding='utf-8-sig')
-                                                            zf.writestr(csv_filename, csv_data)
-                                            
-                                            # 進捗表示を完了状態にする
-                                            progress_bar.progress(1.0)
-                                            status_text.text("ZIPアーカイブの作成が完了しました！")
-                                            
-                                            # ZIPファイルのダウンロードボタンを表示
-                                            st.success(f"ZIPアーカイブが正常に作成されました。含まれるファイル数: {len(sections_to_download)}")
-                                            st.download_button(
-                                                label="ZIPアーカイブをダウンロード",
-                                                data=zip_buffer.getvalue(),
-                                                file_name=zip_filename,
-                                                mime="application/zip",
-                                            )
-                                        except Exception as e:
-                                            st.error(f"ZIPアーカイブ作成中にエラーが発生しました: {str(e)}")
-                                            st.error(traceback.format_exc())
-                        else:
-                            st.warning("ダウンロードするセクションを選択してください。")
-                    else:
-                        # 全データを1つのファイルに保存
-                        st.subheader("ダウンロード")
-                        
-                        if is_csv_output:
-                            # CSV形式で保存
-                            csv_filename = output_filename if output_filename.endswith('.csv') else os.path.splitext(output_filename)[0] + '.csv'
-                            
-                            if st.button("CSVファイルを生成してダウンロード"):
-                                with st.spinner('CSVファイルを生成中...'):
+                                    # 代替のCSVダウンロードを提供
+                                    alt_csv_filename = os.path.splitext(output_filename)[0] + '.csv'
                                     csv_data = df.to_csv(index=False, encoding='utf-8-sig')
                                     
-                                    st.success("CSVファイルが生成されました")
-                                    st.download_button(
-                                        label="CSVファイルをダウンロード",
+                                    st.info("代わりにCSV形式で保存してください。")
+                                    if st.download_button(
+                                        label="代替CSVファイルをダウンロード",
                                         data=csv_data.encode('utf-8-sig'),
-                                        file_name=csv_filename,
+                                        file_name=alt_csv_filename,
                                         mime="text/csv",
-                                    )
-                        else:
-                            # Excel形式で保存
-                            excel_filename = output_filename if output_filename.endswith('.xlsx') else os.path.splitext(output_filename)[0] + '.xlsx'
-                            
-                            # データサイズが大きい場合は警告
-                            if len(df) > 1000000:
-                                st.warning("データサイズが大きいため、Excel形式での保存に失敗する可能性があります。CSV形式での保存をお勧めします。")
-                            
-                            if st.button("Excelファイルを生成してダウンロード"):
-                                with st.spinner('Excelファイルを生成中...'):
-                                    try:
-                                        output = io.BytesIO()
-                                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                                            df.to_excel(writer, index=False, sheet_name='DXF構造')
-                                        
-                                        st.success("Excelファイルが生成されました")
-                                        st.download_button(
-                                            label="Excelファイルをダウンロード",
-                                            data=output.getvalue(),
-                                            file_name=excel_filename,
-                                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                        )
-                                    except Exception as e:
-                                        st.error(f"Excelファイルの作成中にエラーが発生しました: {str(e)}")
-                                        st.info("代わりにCSV形式で保存してください。")
-            
-            except Exception as e:
-                st.error(f"エラーが発生しました: {str(e)}")
-                st.error(traceback.format_exc())
+                                        key="alt_csv_download_all"
+                                    ):
+                                        st.success("CSVファイルをダウンロードしました")
+                
+                except Exception as e:
+                    st.error(f"エラーが発生しました: {str(e)}")
+                    st.error(traceback.format_exc())
 
     elif tool_selection == '構造分析（テキスト出力）':
         st.header('DXFデータ構造を分析しマークダウン形式のテキストファイルで出力')
