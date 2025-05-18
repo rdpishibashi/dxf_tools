@@ -1,0 +1,399 @@
+import streamlit as st
+import os
+import traceback
+import zipfile
+import io
+import sys
+
+# utils モジュールをインポート可能にするためのパスの追加
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from utils.extract_labels import extract_labels, get_layers_from_dxf
+from common_utils import save_uploadedfile, get_output_filename, handle_error
+
+def app():
+    st.title('図面ラベル抽出')
+    st.write('DXFファイルからラベル（テキスト要素）を抽出します。')
+    
+    # ファイルアップロードUI
+    uploaded_files = st.file_uploader(
+        "DXFファイルをアップロード (複数選択可能)", 
+        type="dxf", 
+        accept_multiple_files=True,
+        key="label_extractor"
+    )
+    
+    # ファイルが選択されたか確認
+    has_files = len(uploaded_files) > 0
+    
+    # オプション設定
+    col1, col2 = st.columns(2)
+    with col1:
+        filter_option = st.checkbox(
+            "回路記号（候補）のみ抽出", 
+            value=False, 
+            help="以下の条件に合致するラベルは回路記号でないと判断して除外します："
+                 "\n- 最初の文字が「(」（例：(BK), (M5)）"
+                 "\n- 最初の文字が数字（例：2.1+, 500DJ）"
+                 "\n- 英大文字だけで2文字以下（E, L, PE）"
+                 "\n- 英大文字１文字に続いて数字（例：R1, T2）"
+                 "\n- 英大文字１文字に続いて数字と「.」からなる文字列（例：L1.1, P01）"
+                 "\n- 英字と「+」もしくは「-」の組み合わせ（例：P+, VCC-）"
+                 "\n- 「GND」を含む（例：GND, GND(M4)）"
+                 "\n- 「AWG」ではじまるラベル（例：AWG14, AWG18）"
+                 "\n- 英単語（＋数字）と空白からなるラベル（例：on ..., CB BOX FX3）"
+                 "\n- 「☆」ではじまるラベル"
+                 "\n- 「注」ではじまるラベル"
+                 "\n- ラベルの文字列中の「(」ではじまり「)」で閉じる文字列部分を削除"
+        )
+    
+    with col2:
+        sort_option = st.selectbox(
+            "並び替え", 
+            options=[
+                ("昇順", "asc"), 
+                ("逆順", "desc"),
+                ("並び替えなし", "none")
+            ],
+            format_func=lambda x: x[0],
+            help="ラベルの並び替え順を指定します",
+            index=0  # デフォルトで昇順を選択
+        )
+        sort_value = sort_option[1]  # タプルの2番目の要素（実際の値）を取得
+    
+    # 出力形式オプション（複数ファイルの場合のみ表示）
+    if has_files and len(uploaded_files) > 1:
+        output_format = st.radio(
+            "出力形式",
+            options=["個別ファイル", "ZIPアーカイブ"],
+            index=0,  # デフォルトで個別ファイルを選択
+            help="複数ファイルの場合、個別に出力するかZIPアーカイブにまとめるかを選択できます"
+        )
+    else:
+        output_format = "個別ファイル"
+            
+    debug_option = st.checkbox("デバッグ情報を表示", value=False, help="フィルタリングの詳細情報を表示します。")
+    
+    # 結果表示用のセッション状態を初期化
+    if 'label_results' not in st.session_state:
+        st.session_state.label_results = None
+        
+    # 選択ファイルのセッション状態を初期化
+    if 'selected_result_file' not in st.session_state:
+        st.session_state.selected_result_file = None
+        
+    # レイヤー選択UI用の変数
+    common_layers = []
+    layer_maps = {}
+    
+    if has_files:
+        try:
+            # すべてのファイルを一時保存
+            temp_files = []
+            for uploaded_file in uploaded_files:
+                temp_file = save_uploadedfile(uploaded_file)
+                temp_files.append((uploaded_file.name, temp_file))
+            
+            # レイヤー情報の読み込み
+            with st.spinner('レイヤー情報を読み込み中...'):
+                # 各ファイルのレイヤー情報を取得
+                for file_name, file_path in temp_files:
+                    try:
+                        layers = get_layers_from_dxf(file_path)
+                        layer_maps[file_name] = layers
+                        
+                        # 初回は全レイヤーを共通レイヤーとする
+                        if not common_layers:
+                            common_layers = layers.copy()
+                        else:
+                            # 共通のレイヤーだけを残す
+                            common_layers = [layer for layer in common_layers if layer in layers]
+                    except Exception as e:
+                        st.error(f"ファイル {file_name} のレイヤー情報読み込みでエラー: {str(e)}")
+            
+            # レイヤー選択UI
+            if layer_maps:
+                # 全ファイル共通のレイヤーがあるかどうか
+                has_common_layers = len(common_layers) > 0
+                
+                # レイヤー選択モード
+                st.subheader("レイヤー選択")
+                
+                # 共通レイヤーが存在しない場合
+                if not has_common_layers and len(layer_maps) > 1:
+                    st.warning("アップロードされたファイル間に共通のレイヤーが見つかりませんでした。各ファイルのレイヤーを個別に選択してください。")
+                
+                # タブの構成を決定
+                tab_names = []
+                if len(layer_maps) > 1:
+                    tab_names.append("共通レイヤー")
+                tab_names.extend([f"ファイル: {name}" for name, _ in temp_files])
+                
+                # タブを作成してファイルごとにレイヤー選択UIを表示
+                tabs = st.tabs(tab_names)
+                
+                # セッション状態の初期化
+                if 'layer_states' not in st.session_state:
+                    st.session_state.layer_states = {}
+                
+                # 初期化: すべてのファイルとレイヤーをセッション状態に追加
+                for file_name, layers in layer_maps.items():
+                    if file_name not in st.session_state.layer_states:
+                        st.session_state.layer_states[file_name] = {}
+                    
+                    for layer in layers:
+                        if layer not in st.session_state.layer_states[file_name]:
+                            st.session_state.layer_states[file_name][layer] = True  # デフォルトで選択状態
+                
+                # タブインデックス
+                tab_index = 0
+                
+                # 共通レイヤータブ（複数ファイルの場合のみ）
+                if len(layer_maps) > 1:
+                    with tabs[tab_index]:
+                        if has_common_layers:
+                            col3, col4 = st.columns([1, 3])
+                            with col3:
+                                if st.button("全選択", key="common_select_all"):
+                                    for file_name in layer_maps.keys():
+                                        for layer in common_layers:
+                                            st.session_state.layer_states[file_name][layer] = True
+                            
+                            with col4:
+                                if st.button("全解除", key="common_deselect_all"):
+                                    for file_name in layer_maps.keys():
+                                        for layer in common_layers:
+                                            st.session_state.layer_states[file_name][layer] = False
+                            
+                            # 3列表示に変更
+                            layer_cols = st.columns(3)
+                            
+                            # 共通レイヤーのチェックボックス
+                            for i, layer in enumerate(common_layers):
+                                col_index = i % 3
+                                with layer_cols[col_index]:
+                                    # 共通レイヤータブでは、すべてのファイルの同名レイヤーを一括で選択/解除
+                                    # 現在の状態を取得（複数ファイルで同じレイヤーが全て選択されている場合のみTrue）
+                                    is_all_selected = all(st.session_state.layer_states[file_name].get(layer, False) 
+                                                         for file_name in layer_maps.keys())
+                                    
+                                    # チェックボックスを表示
+                                    is_selected = st.checkbox(
+                                        layer, 
+                                        value=is_all_selected, 
+                                        key=f"common_layer_{layer}"
+                                    )
+                                    
+                                    # 選択状態を全ファイルの同名レイヤーに反映
+                                    for file_name in layer_maps.keys():
+                                        if layer in layer_maps[file_name]:  # ファイルにそのレイヤーが存在する場合のみ
+                                            st.session_state.layer_states[file_name][layer] = is_selected
+                        else:
+                            st.info("アップロードされたファイル間に共通のレイヤーがありません。各ファイルタブでレイヤーを選択してください。")
+                        
+                        tab_index += 1
+                
+                # 各ファイルのタブ
+                for i, (file_name, _) in enumerate(temp_files):
+                    with tabs[tab_index + i]:
+                        st.write(f"ファイル: {file_name}")
+                        
+                        if file_name in layer_maps and layer_maps[file_name]:
+                            col5, col6 = st.columns([1, 3])
+                            with col5:
+                                if st.button("全選択", key=f"file_{i}_select_all"):
+                                    for layer in layer_maps[file_name]:
+                                        st.session_state.layer_states[file_name][layer] = True
+                            
+                            with col6:
+                                if st.button("全解除", key=f"file_{i}_deselect_all"):
+                                    for layer in layer_maps[file_name]:
+                                        st.session_state.layer_states[file_name][layer] = False
+                            
+                            # 3列表示
+                            file_layer_cols = st.columns(3)
+                            
+                            # 各ファイルのレイヤーチェックボックス
+                            for j, layer in enumerate(layer_maps[file_name]):
+                                col_index = j % 3
+                                with file_layer_cols[col_index]:
+                                    is_selected = st.checkbox(
+                                        layer, 
+                                        value=st.session_state.layer_states[file_name].get(layer, True),
+                                        key=f"file_{i}_layer_{layer}"
+                                    )
+                                    st.session_state.layer_states[file_name][layer] = is_selected
+                        else:
+                            st.warning(f"このファイルにはレイヤーが見つかりませんでした。")
+            
+            # 処理実行ボタン
+            process_button = st.button("ラベルを抽出")
+            
+            # 処理実行または結果表示
+            if process_button or st.session_state.label_results is not None:
+                # ボタンが押された場合は処理を実行
+                if process_button:
+                    # 選択されたレイヤーを確認
+                    selected_layers_by_file = {}
+                    for file_name in layer_maps.keys():
+                        selected_layers_by_file[file_name] = [
+                            layer for layer, is_selected in st.session_state.layer_states[file_name].items() 
+                            if is_selected
+                        ]
+                    
+                    # レイヤーが選択されていない場合の警告
+                    files_without_layers = [
+                        file_name for file_name, layers in selected_layers_by_file.items() 
+                        if not layers
+                    ]
+                    
+                    if files_without_layers:
+                        st.warning(f"以下のファイルではレイヤーが選択されていません。全レイヤーを対象とします: {', '.join(files_without_layers)}")
+                    
+                    # 処理の実行
+                    with st.spinner('ラベルを抽出中...'):
+                        # 結果を格納するための辞書
+                        results = {}
+                        
+                        # 各ファイルを処理
+                        for file_name, file_path in temp_files:
+                            # 選択されたレイヤー
+                            selected_layers = selected_layers_by_file.get(file_name, [])
+                            
+                            # レイヤーが選択されていない場合は全レイヤーを対象とする
+                            if not selected_layers:
+                                selected_layers = layer_maps.get(file_name, [])
+                            
+                            # ラベル抽出
+                            labels, info = extract_labels(
+                                file_path, 
+                                filter_non_parts=filter_option, 
+                                sort_order=sort_value, 
+                                debug=debug_option,
+                                selected_layers=selected_layers
+                            )
+                            
+                            results[file_name] = (labels, info)
+                        
+                        # セッション状態に結果を保存
+                        st.session_state.label_results = results
+                        
+                        # 初回は最初のファイルを選択
+                        if results:
+                            st.session_state.selected_result_file = list(results.keys())[0]
+                        
+                        # ZIPアーカイブの場合、自動的にダウンロードも実行
+                        if output_format == "ZIPアーカイブ" and len(results) > 1:
+                            # 出力ファイル用のデータを準備
+                            output_files = {}
+                            
+                            # すべてのファイルの結果をZIPアーカイブ用に準備
+                            for file_name, (file_labels, _) in results.items():
+                                if file_labels:
+                                    # 個別ファイルのファイル名も同じヘルパー関数で生成
+                                    file_output_name = get_output_filename(file_name, 'labels')
+                                    output_files[file_output_name] = "\n".join(file_labels).encode('utf-8')
+                            
+                            # ZIPアーカイブのダウンロードボタン
+                            if output_files:
+                                # ZIPファイルを作成
+                                zip_buffer = io.BytesIO()
+                                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                                    for filename, data in output_files.items():
+                                        zf.writestr(filename, data)
+                                
+                                # ZIPファイル名を作成
+                                zip_filename = get_output_filename("labels_extracted", 'labels', 'zip')
+                                
+                                # 総ラベル数の計算
+                                total_labels = sum(len(labels) for labels, _ in results.values())
+                                
+                                # ダウンロードボタンを表示
+                                st.success(f"抽出完了！ 合計 {len(output_files)} ファイル、{total_labels} ラベルが抽出されました。")
+                                st.download_button(
+                                    label=f"全ファイルのラベルをZIPでダウンロード ({len(output_files)}ファイル)",
+                                    data=zip_buffer.getvalue(),
+                                    file_name=zip_filename,
+                                    mime="application/zip",
+                                    key="download_zip"
+                                )
+                
+                # 個別ファイルの場合のみ詳細結果表示
+                if output_format == "個別ファイル":
+                    results = st.session_state.label_results
+                    if results:
+                        st.subheader("抽出結果")
+                        
+                        # 結果表示用のタブ名を準備
+                        result_tab_names = list(results.keys())
+                        
+                        # コールバック関数でファイル選択を処理
+                        def on_file_change():
+                            # 選択が変更されたら保存
+                            st.session_state.selected_result_file = st.session_state.file_selector
+                        
+                        # セレクトボックスを使用して選択肢を表示
+                        # デフォルト値が保存されていない場合は最初のファイルを選択
+                        default_file = st.session_state.selected_result_file
+                        if default_file not in result_tab_names and result_tab_names:
+                            default_file = result_tab_names[0]
+                            st.session_state.selected_result_file = default_file
+                        
+                        st.selectbox(
+                            "ファイル選択", 
+                            options=result_tab_names,
+                            index=result_tab_names.index(default_file) if default_file in result_tab_names else 0,
+                            key="file_selector",
+                            on_change=on_file_change
+                        )
+                        
+                        # 選択されたファイルの結果を表示
+                        selected_file = st.session_state.selected_result_file
+                        if selected_file in results:
+                            labels, info = results[selected_file]
+                            
+                            # レイヤー処理情報の表示
+                            st.info(f"処理対象レイヤー: {info['processed_layers']} / {info['total_layers']}")
+                            
+                            # 処理情報の表示
+                            st.info(f"元の抽出ラベル総数: {info['total_extracted']}")
+                            
+                            if 'filtered_count' in info and info['filtered_count'] > 0:
+                                st.info(f"フィルタリングで除外したラベル数: {info['filtered_count']}")
+                            
+                            st.info(f"最終的なラベル数: {info['final_count']}")
+                            
+                            # ソート情報の表示（セッションには保存されていないため条件分岐）
+                            if process_button and sort_value != "none":
+                                sort_text = "昇順" if sort_value == "asc" else "逆順"
+                                st.info(f"ラベルを{sort_text}で並び替えました")
+                            
+                            # ラベル一覧
+                            st.text_area(f"ラベル一覧 - {selected_file}", "\n".join(labels), height=300)
+                            
+                            # 出力ファイル名を生成
+                            output_filename = get_output_filename(selected_file, 'labels')
+                            
+                            # 個別ファイルダウンロードボタン
+                            if labels:
+                                txt_str = "\n".join(labels)
+                                st.download_button(
+                                    label=f"{selected_file} のラベルをダウンロード",
+                                    data=txt_str.encode('utf-8'),
+                                    file_name=output_filename,
+                                    mime="text/plain",
+                                    key=f"download_{hash(selected_file)}"
+                                )
+            
+            # 一時ファイルの削除
+            for _, file_path in temp_files:
+                try:
+                    os.unlink(file_path)
+                except:
+                    pass
+                    
+        except Exception as e:
+            handle_error(e)
+
+if __name__ == "__main__":
+    app()
