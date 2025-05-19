@@ -2,7 +2,7 @@ import pandas as pd
 import io
 from collections import Counter
 import os
-from utils.extract_labels import extract_labels  # 既存の関数を再利用
+from utils.extract_labels import extract_labels
 
 def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
     """

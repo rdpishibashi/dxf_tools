@@ -5,9 +5,8 @@
 
 # ただし、利便性のために各モジュールの主要な関数をパッケージレベルでエクスポートします
 from .extract_labels import extract_labels, get_layers_from_dxf, process_multiple_dxf_files
-from .analyze_structure import analyze_dxf_structure, get_default_output_filename
 from .extract_hierarchy import extract_hierarchy
 from .compare_dxf import compare_dxf_files_and_generate_dxf
-from .compare_labels import compare_labels
+from .compare_labels import compare_labels_multi as compare_labels
 from .extract_symbols import extract_circuit_symbols
 from .compare_partslist import compare_parts_list, normalize_label
