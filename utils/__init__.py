@@ -8,5 +8,5 @@ from .extract_labels import extract_labels, get_layers_from_dxf, process_multipl
 from .extract_hierarchy import extract_hierarchy
 from .compare_dxf import compare_dxf_files_and_generate_dxf
 from .compare_labels import compare_labels_multi as compare_labels
-from .extract_symbols import extract_circuit_symbols
-from .compare_partslist import compare_parts_list, normalize_label
+from .extract_symbols import extract_circuit_symbols, find_all_possible_assembly_numbers
+from .compare_partslist import compare_parts_list_multi, normalize_label

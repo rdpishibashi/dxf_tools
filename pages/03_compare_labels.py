@@ -54,7 +54,7 @@ def app():
             st.session_state.file_pairs.append({
                 'fileA': None,
                 'fileB': None,
-                'name': f"ペア{i+1}"
+                'name': f"Pair{i+1}"
             })
     
     # 各ペアの入力フォーム
@@ -99,7 +99,7 @@ def app():
                 ))
                 
                 # プレビュー表示
-                st.success(f"ペア{i+1}: {st.session_state.file_pairs[i]['fileA'].name} と {st.session_state.file_pairs[i]['fileB'].name} を比較")
+                st.success(f"Pair{i+1}: {st.session_state.file_pairs[i]['fileA'].name} と {st.session_state.file_pairs[i]['fileB'].name} を比較")
     
     # ヘルプ情報を表示
     st.info("""
@@ -126,7 +126,7 @@ def app():
                     for file_a, file_b, pair_name in file_pairs_valid:
                         temp_file_a = save_uploadedfile(file_a)
                         temp_file_b = save_uploadedfile(file_b)
-                        temp_file_pairs.append((temp_file_a, temp_file_b, pair_name))
+                        temp_file_pairs.append((file_a, file_b, temp_file_a, temp_file_b, pair_name))
                     
                     # Excel出力を生成
                     excel_data = compare_labels_multi(
@@ -147,10 +147,10 @@ def app():
                     )
                     
                     # 一時ファイルの削除
-                    for temp_a, temp_b, _ in temp_file_pairs:
+                    for _, _, temp_file_a, temp_file_b, _ in temp_file_pairs:
                         try:
-                            os.unlink(temp_a)
-                            os.unlink(temp_b)
+                            os.unlink(temp_file_a)
+                            os.unlink(temp_file_b)
                         except:
                             pass
         

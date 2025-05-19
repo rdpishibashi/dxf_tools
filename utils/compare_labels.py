@@ -9,7 +9,10 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
     複数のDXFファイルペアのラベル比較結果をExcelとして出力する
     
     Args:
-        file_pairs: ファイルペアのリスト[(fileA_path, fileB_path, pair_name), ...]
+        file_pairs: ファイルペアのリスト[(file_a, file_b, temp_file_a, temp_file_b, pair_name), ...]
+          - file_a, file_b: 元のアップロードファイルオブジェクト
+          - temp_file_a, temp_file_b: 一時ファイルのパス
+          - pair_name: ペア名
         filter_non_parts: 回路記号（候補）のみを抽出するかどうか
         sort_order: ソート順（"asc"=昇順, "desc"=降順, "none"=ソートなし）
         
@@ -21,10 +24,10 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
     writer = pd.ExcelWriter(output, engine='xlsxwriter')
     
     # 各ペアを処理
-    for idx, (file_a, file_b, pair_name) in enumerate(file_pairs):
-        # ラベルを抽出（extract_labelsを再利用）
-        labels_a, info_a = extract_labels(file_a, filter_non_parts=filter_non_parts, sort_order=sort_order)
-        labels_b, info_b = extract_labels(file_b, filter_non_parts=filter_non_parts, sort_order=sort_order)
+    for idx, (file_a, file_b, temp_file_a, temp_file_b, pair_name) in enumerate(file_pairs):
+        # ラベルを抽出（extract_labelsを再利用）- 一時ファイルパスを使用
+        labels_a, info_a = extract_labels(temp_file_a, filter_non_parts=filter_non_parts, sort_order=sort_order)
+        labels_b, info_b = extract_labels(temp_file_b, filter_non_parts=filter_non_parts, sort_order=sort_order)
         
         # ラベルの出現回数をカウント
         counter_a = Counter(labels_a)
@@ -33,14 +36,16 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
         # すべてのユニークなラベルを取得
         all_labels = sorted(set(list(counter_a.keys()) + list(counter_b.keys())))
         
-        # ファイルのファイル名を取得（パスから）
-        file_a_name = os.path.basename(file_a)
-        file_b_name = os.path.basename(file_b)
+        # 元のアップロードファイル名を使用（UploadedFileオブジェクトから）
+        file_a_base = os.path.splitext(file_a.name)[0]
+        file_b_base = os.path.splitext(file_b.name)[0]
+        file_a_name = f"A:{file_a_base}"
+        file_b_name = f"B:{file_b_base}"
         
         # シート名を決定（最大31文字）
         if pair_name:
             # カスタム名がある場合
-            sheet_name = f"Pair{idx+1}_{pair_name}"[:31]
+            sheet_name = f"{pair_name}"[:31]
         else:
             # ファイル名からシート名を生成
             sheet_name = f"Pair{idx+1}"[:31]
@@ -57,7 +62,7 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
         df['Status'] = df.apply(lambda row: 
             'A Only' if row[file_a_name] > 0 and row[file_b_name] == 0 else
             'B Only' if row[file_a_name] == 0 and row[file_b_name] > 0 else
-            'Different Count' if row[file_a_name] != row[file_b_name] else
+            'Different' if row[file_a_name] != row[file_b_name] else
             'Same', axis=1)
         
         # 差分情報の列を追加（B - A）
@@ -96,7 +101,7 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
         # 条件付き書式の適用
         # 'Status'列が'A Only'の場合、行全体を淡い赤で表示
         # 'Status'列が'B Only'の場合、行全体を淡い緑で表示
-        # 'Status'列が'Different Count'の場合、行全体を淡い黄で表示
+        # 'Status'列が'Different'の場合、行全体を淡い黄で表示
         worksheet.conditional_format(1, 0, len(df), len(df.columns)-1, {
             'type': 'formula',
             'criteria': '=$D2="A Only"',
@@ -111,7 +116,7 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
         
         worksheet.conditional_format(1, 0, len(df), len(df.columns)-1, {
             'type': 'formula',
-            'criteria': '=$D2="Different Count"',
+            'criteria': '=$D2="Different"',
             'format': format_different
         })
         
@@ -126,7 +131,7 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
             ["差分サマリー:", "", ""],
             [f"Aのみのラベル: {sum(1 for s in df['Status'] if s == 'A Only')}", 
              f"Bのみのラベル: {sum(1 for s in df['Status'] if s == 'B Only')}", 
-             f"異なる個数のラベル: {sum(1 for s in df['Status'] if s == 'Different Count')}"]
+             f"異なる個数のラベル: {sum(1 for s in df['Status'] if s == 'Different')}"]
         ]
         
         # サマリーシートを追加
@@ -165,11 +170,11 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
         summary_sheet = writer.sheets["Summary"]
         summary_sheet.write(idx+3, 0, f"ペア{idx+1}")
         summary_sheet.write(idx+3, 1, sheet_name)
-        summary_sheet.write(idx+3, 2, file_a_name)
-        summary_sheet.write(idx+3, 3, file_b_name)
+        summary_sheet.write(idx+3, 2, file_a_base)  # 元のファイル名を表示
+        summary_sheet.write(idx+3, 3, file_b_base)  # 元のファイル名を表示
         summary_sheet.write(idx+3, 4, sum(1 for s in df['Status'] if s == 'A Only'))
         summary_sheet.write(idx+3, 5, sum(1 for s in df['Status'] if s == 'B Only'))
-        summary_sheet.write(idx+3, 6, sum(1 for s in df['Status'] if s == 'Different Count'))
+        summary_sheet.write(idx+3, 6, sum(1 for s in df['Status'] if s == 'Different'))
         summary_sheet.write(idx+3, 7, len(all_labels))
     
     # Excelファイルを保存

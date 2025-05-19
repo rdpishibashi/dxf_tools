@@ -1,12 +1,96 @@
 import streamlit as st
 import os
 import sys
+import traceback
+import tempfile
+import pandas as pd
 
 # utils モジュールをインポート可能にするためのパスの追加
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from utils.extract_symbols import extract_circuit_symbols, extract_assembly_number_from_filename
+from utils.extract_symbols import extract_circuit_symbols
 from common_utils import save_uploadedfile, get_output_filename, handle_error
+
+def safe_save_uploadedfile(uploaded_file):
+    """
+    アップロードされたファイルを安全に保存する関数
+    
+    Args:
+        uploaded_file: アップロードされたファイルオブジェクト
+        
+    Returns:
+        str: 保存されたファイルのパス
+    """
+    try:
+        # まず通常の方法で保存を試みる
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as f:
+            f.write(uploaded_file.getbuffer())
+            return f.name
+    except Exception as e:
+        st.warning(f"標準的な方法でのファイル保存に失敗しました: {str(e)}。代替方法を試みます。")
+        try:
+            # 代替方法: バイナリモードで開く
+            temp_path = tempfile.mktemp(suffix=os.path.splitext(uploaded_file.name)[1])
+            with open(temp_path, 'wb') as f:
+                f.write(uploaded_file.getbuffer())
+            return temp_path
+        except Exception as e2:
+            st.error(f"ファイル保存の代替方法も失敗しました: {str(e2)}")
+            raise
+
+def find_assembly_numbers(excel_path):
+    """
+    Excelファイルから利用可能な図面番号一覧を抽出する
+    
+    Args:
+        excel_path: Excelファイルのパス
+        
+    Returns:
+        list: 利用可能な図面番号のリスト
+    """
+    try:
+        # まずopenpyxlでExcelを読み込む
+        try:
+            df = pd.read_excel(excel_path, engine='openpyxl')
+        except Exception:
+            # openpyxlが失敗したら他のエンジンを試す
+            try:
+                df = pd.read_excel(excel_path, engine='xlrd')
+            except Exception:
+                # 最後の手段
+                df = pd.read_excel(excel_path, engine=None)
+        
+        # 図面番号列が存在するか確認
+        if "図面番号" not in df.columns:
+            # 大文字小文字の違いを無視して検索
+            for col in df.columns:
+                if col.lower() == "図面番号".lower():
+                    df = df.rename(columns={col: "図面番号"})
+                    break
+        
+        # 図面番号列がない場合
+        if "図面番号" not in df.columns:
+            return []
+        
+        # 利用可能な図面番号を検索
+        possible_assemblies = []
+        
+        for i in range(len(df) - 1):  # 最後の行は次の行がないので対象外
+            current_row = df.iloc[i]
+            next_row = df.iloc[i + 1]
+            
+            # 現在の行に図面番号があり、次の行の図面番号が空白の場合
+            if (pd.notna(current_row["図面番号"]) and 
+                (pd.isna(next_row["図面番号"]) or str(next_row["図面番号"]).strip() == "")):
+                # 有効な図面番号のみを追加（空白や特殊文字のみではないもの）
+                assembly_no = str(current_row["図面番号"]).strip()
+                if assembly_no and assembly_no not in possible_assemblies:
+                    possible_assemblies.append(assembly_no)
+        
+        return possible_assemblies
+    except Exception as e:
+        st.error(f"図面番号抽出中にエラーが発生しました: {str(e)}")
+        return []
 
 def app():
     st.title('Excel回路記号抽出')
@@ -15,107 +99,162 @@ def app():
     # ファイルアップロードUI
     uploaded_file = st.file_uploader("Excelファイルをアップロード", type=["xlsx"], key="circuit_extractor")
     
-    # 各種オプション設定
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # デフォルトのファイル名を設定
-        default_filename = "circuit_symbols.txt"
-        if uploaded_file is not None:
-            default_filename = get_output_filename(uploaded_file.name, 'symbols')
-            
-        output_filename = st.text_input("出力ファイル名", default_filename)
-        if not output_filename.endswith('.txt'):
-            output_filename += '.txt'
-    
-    with col2:
-        use_filename = st.checkbox("ファイル名にある図面番号を使用", value=True, 
-                                   help="ファイル名から図面番号を自動抽出します。例：'ULKES構成_EE6312-000-01A.xlsx' から 'EE6312-000-01A' を抽出")
-        assembly_number = None if use_filename else st.text_input("図面番号", "")
-    
-    # 追加オプション
-    col3, col4 = st.columns(2)
-    
-    with col3:
-        use_all_assemblies = st.checkbox("全ての可能な図面番号を使用", value=False, 
-                                        help="Excelファイル内で検出できる部品を含む全ての図面番号に対して処理を行います。")
-    
-    with col4:
-        include_maker_info = st.checkbox("メーカー情報を含める", value=False,
-                                        help="出力にメーカー名とメーカー型式を含めます。CSVフォーマットになります。")
-    
-    # ヘルプ情報
-    with st.expander("詳細情報"):
-        st.markdown("""
-        ### このツールについて
-        このツールは、ULKES形式のExcelファイルから回路記号を抽出します。出力形式は以下のような特徴があります：
-        
-        1. 基本的に、各行の「符号」または「構成コメント」欄から回路記号を抽出します。
-        2. 複数の回路記号が存在する場合は「_」（アンダースコア）で区切られます。
-        3. 「構成数」（数量）に基づいて、不足分の回路記号は自動生成されます。
-        4. メーカー情報を含める設定にすると、CSV形式で「回路記号,メーカー名,メーカー型式」の形式で出力されます。
-        
-        ### 図面番号とは
-        図面番号は、Excelファイル内の「図面番号」列に記載される識別子で、通常「EE6312-000-01A」のような形式です。
-        これは、その行以降の部品が属する対象図面を示します。
-        
-        - 「ファイル名にある図面番号を使用」オプションをONにすると、ファイル名から図面番号を自動抽出します。
-          例：「ULKES構成_EE6312-000-01A.xlsx」から「EE6312-000-01A」を抽出。
-        - 手動で図面番号を指定することも可能です。
-        - 「全ての可能な図面番号を使用」オプションをONにすると、ファイル内に存在する全ての図面番号に対して処理を行います。
-        """)
-        
+    # ファイルがアップロードされた場合
     if uploaded_file is not None:
         try:
-            # ファイルが選択されたら処理ボタンを表示
-            if st.button("回路記号を抽出"):
-                # ファイルを一時ディレクトリに保存
-                temp_file = save_uploadedfile(uploaded_file)
+            with st.spinner('ファイルを解析中...'):
+                # ファイルを一時保存
+                temp_file = safe_save_uploadedfile(uploaded_file)
                 
-                with st.spinner('回路記号を抽出中...'):
-                    # ファイル名からアセンブリ番号を取得
-                    if use_filename:
-                        assembly_number = extract_assembly_number_from_filename(uploaded_file.name)
-                    
-                    # 回路記号を抽出
-                    symbols, info = extract_circuit_symbols(
-                        temp_file,
-                        assembly_number=assembly_number,
-                        use_all_assemblies=use_all_assemblies,
-                        include_maker_info=include_maker_info
+                # 図面番号を抽出
+                assembly_numbers = find_assembly_numbers(temp_file)
+                
+                if not assembly_numbers:
+                    st.warning("図面番号が見つかりませんでした。ファイル形式を確認してください。")
+                    try:
+                        os.unlink(temp_file)
+                    except:
+                        pass
+                    return
+            
+            # 図面番号の選択UI
+            st.subheader("処理する図面番号の選択")
+            st.write(f"ファイル内に {len(assembly_numbers)} 個の図面番号が見つかりました。")
+            
+            # セッション状態の初期化（選択状態を保持するため）
+            if 'selected_assemblies' not in st.session_state:
+                st.session_state.selected_assemblies = {assembly: True for assembly in assembly_numbers}
+            
+            # 全選択/全解除ボタン
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                if st.button("全て選択"):
+                    for assembly in assembly_numbers:
+                        st.session_state.selected_assemblies[assembly] = True
+            
+            with col2:
+                if st.button("全て解除"):
+                    for assembly in assembly_numbers:
+                        st.session_state.selected_assemblies[assembly] = False
+            
+            # 各図面番号のチェックボックスを3列で表示
+            st.write("処理する図面番号をチェックしてください:")
+            
+            # 図面番号を3列に分けて表示
+            cols = st.columns(3)
+            
+            for i, assembly in enumerate(assembly_numbers):
+                with cols[i % 3]:
+                    st.session_state.selected_assemblies[assembly] = st.checkbox(
+                        assembly,
+                        value=st.session_state.selected_assemblies.get(assembly, True),
+                        key=f"checkbox_{assembly}"
                     )
-                    
-                    # 処理結果の表示
-                    st.subheader("抽出結果")
-                    
-                    if info["error"]:
-                        st.error(f"エラー: {info['error']}")
-                    else:
-                        st.info(f"図面番号: {info['assembly_number']}")
-                        st.info(f"対象データ行数: {info['processed_rows']} / {info['total_rows']}")
-                        st.info(f"抽出された回路記号数: {info['total_symbols']}")
+            
+            # 選択された図面番号のリスト
+            selected_assemblies = [
+                assembly for assembly in assembly_numbers 
+                if st.session_state.selected_assemblies.get(assembly, False)
+            ]
+            
+            # 出力オプション
+            st.subheader("出力オプション")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # デフォルトのファイル名を設定
+                default_filename = "circuit_symbols.txt"
+                if selected_assemblies:
+                    # 最初に選択された図面番号をベースに出力ファイル名を設定
+                    default_filename = f"{selected_assemblies[0]}_symbols.txt"
+                else:
+                    # 選択がない場合は最初の図面番号を使用
+                    default_filename = f"{assembly_numbers[0]}_symbols.txt" if assembly_numbers else "circuit_symbols.txt"
+                
+                output_filename = st.text_input("出力ファイル名", default_filename)
+                if not output_filename.endswith('.txt'):
+                    output_filename += '.txt'
+            
+            with col2:
+                include_maker_info = st.checkbox("メーカー情報を含める", value=False,
+                                                help="出力にメーカー名とメーカー型式を含めます。CSVフォーマットになります。")
+            
+            # 処理実行ボタン
+            if len(selected_assemblies) == 0:
+                st.warning("少なくとも1つの図面番号を選択してください。")
+            else:
+                if st.button("回路記号を抽出"):
+                    try:
+                        # 選択された図面番号ごとに回路記号を抽出
+                        all_symbols = []
+                        total_processed_rows = 0
+                        total_symbols = 0
+                        
+                        with st.spinner('回路記号を抽出中...'):
+                            # 処理結果の表示用プログレスバー
+                            progress_bar = st.progress(0)
+                            
+                            # 各図面番号に対して処理
+                            for i, assembly_number in enumerate(selected_assemblies):
+                                # 処理進捗の更新
+                                progress = (i) / len(selected_assemblies)
+                                progress_bar.progress(progress)
+                                
+                                # 現在処理中の図面番号を表示
+                                status_text = st.empty()
+                                status_text.info(f"処理中: {assembly_number} ({i+1}/{len(selected_assemblies)})")
+                                
+                                # 図面番号を指定して回路記号を抽出
+                                symbols, info = extract_circuit_symbols(
+                                    temp_file,
+                                    assembly_number=assembly_number,
+                                    use_all_assemblies=False,  # 常にFalse（個別処理）
+                                    include_maker_info=include_maker_info
+                                )
+                                
+                                # エラーがなければ結果を追加
+                                if not info["error"]:
+                                    all_symbols.extend(symbols)
+                                    total_processed_rows += info["processed_rows"]
+                                    total_symbols += info["total_symbols"]
+                                else:
+                                    st.warning(f"図面番号 '{assembly_number}' の処理中にエラーが発生しました: {info['error']}")
+                            
+                            # 進捗バーを完了
+                            progress_bar.progress(1.0)
+                            status_text.empty()
+                        
+                        # 処理結果の表示
+                        st.subheader("抽出結果")
+                        st.success(f"処理完了！ {len(selected_assemblies)} 個の図面番号を処理しました。")
+                        st.info(f"処理した図面番号: {', '.join(selected_assemblies)}")
+                        st.info(f"対象データ行数: {total_processed_rows}")
+                        st.info(f"抽出された回路記号数: {len(all_symbols)}")
                         
                         # 抽出された回路記号の表示
-                        st.text_area("回路記号リスト", "\n".join(symbols), height=300)
+                        st.text_area("回路記号リスト", "\n".join(all_symbols), height=300)
                         
                         # ダウンロードボタンを作成
-                        if symbols:
-                            txt_str = "\n".join(symbols)
+                        if all_symbols:
+                            txt_str = "\n".join(all_symbols)
                             st.download_button(
                                 label="テキストファイルをダウンロード",
                                 data=txt_str.encode('utf-8'),
                                 file_name=output_filename,
                                 mime="text/plain",
                             )
-                
-                # 一時ファイルの削除
-                try:
-                    os.unlink(temp_file)
-                except:
-                    pass
+                    
+                    except Exception as e:
+                        st.error(f"処理中にエラーが発生しました: {str(e)}")
+                        st.error(traceback.format_exc())
+            
+            # 一時ファイルの削除は処理終了時のみ
+            # ページが再読み込みされると、新たにファイルが生成されるため
         
         except Exception as e:
-            handle_error(e)
+            st.error(f"ファイル処理中に予期しないエラーが発生しました: {str(e)}")
+            st.error(traceback.format_exc())
     else:
         st.info("ULKESフォーマットのExcelファイルをアップロードしてください。")
 

@@ -1,109 +1,185 @@
 import streamlit as st
 import os
 import sys
+import traceback
 
 # utils モジュールをインポート可能にするためのパスの追加
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from utils.compare_partslist import compare_parts_list
+from utils.compare_partslist import compare_parts_list_multi
 from common_utils import save_uploadedfile, get_comparison_filename, handle_error
 
 def app():
     st.title('回路記号リスト差分抽出')
-    st.write('2つの回路記号リストを比較し、差分をマークダウン形式で出力します。')
+    st.write('複数の回路記号リストペアを比較し、差分をExcel形式で出力します。')
     
-    # ファイルアップロードUI
-    col1, col2 = st.columns(2)
+    # オプション設定
+    with st.expander("オプション設定", expanded=True):
+        # 出力ファイル名設定
+        output_filename = st.text_input("出力Excelファイル名", "partslist_diff_result.xlsx")
+        if not output_filename.endswith('.xlsx'):
+            output_filename += '.xlsx'
     
-    with col1:
-        uploaded_file_a = st.file_uploader("回路記号リスト・ファイルA", type=["txt"], key="partslist_a")
+    # ファイルペア登録UI
+    st.subheader("ファイルペア登録")
+    st.write("最大5ペアの回路記号リストファイルを登録できます")
     
-    with col2:
-        uploaded_file_b = st.file_uploader("回路記号リスト・ファイルB", type=["txt"], key="partslist_b")
+    # セッション状態の初期化
+    if 'file_pairs' not in st.session_state:
+        st.session_state.file_pairs = []
+        for i in range(5):  # 最大5ペア
+            st.session_state.file_pairs.append({
+                'fileA': None,
+                'fileB': None,
+                'name': f"Pair{i+1}"
+            })
     
-    # デフォルトのファイル名を設定
-    default_filename = "partslist_diff.md"
-    if uploaded_file_a is not None and uploaded_file_b is not None:
-        default_filename = get_comparison_filename(uploaded_file_a.name, uploaded_file_b.name, 'partslist_diff')
-        
-    output_filename = st.text_input("出力ファイル名", default_filename)
-    if not output_filename.endswith('.md'):
-        output_filename += '.md'
+    # 各ペアの入力フォーム
+    file_pairs_valid = []
     
-    # ヘルプ情報
+    for i in range(5):  # 最大5ペア
+        with st.expander(f"ファイルペア {i+1}", expanded=i==0):
+            col1, col2, col3 = st.columns([2, 2, 1])
+            
+            with col1:
+                uploaded_file_a = st.file_uploader(
+                    f"回路記号リスト・ファイルA {i+1}", 
+                    type=["txt", "csv"], 
+                    key=f"partslist_a_{i}"
+                )
+                if uploaded_file_a:
+                    st.session_state.file_pairs[i]['fileA'] = uploaded_file_a
+                
+            with col2:
+                uploaded_file_b = st.file_uploader(
+                    f"回路記号リスト・ファイルB {i+1}", 
+                    type=["txt", "csv"], 
+                    key=f"partslist_b_{i}"
+                )
+                if uploaded_file_b:
+                    st.session_state.file_pairs[i]['fileB'] = uploaded_file_b
+            
+            with col3:
+                pair_name = st.text_input(
+                    "ペア名",
+                    value=st.session_state.file_pairs[i]['name'],
+                    key=f"pair_name_{i}"
+                )
+                st.session_state.file_pairs[i]['name'] = pair_name
+            
+            # 両方のファイルが選択されている場合、有効なペアとして追加
+            if st.session_state.file_pairs[i]['fileA'] and st.session_state.file_pairs[i]['fileB']:
+                file_pairs_valid.append((
+                    st.session_state.file_pairs[i]['fileA'],
+                    st.session_state.file_pairs[i]['fileB'],
+                    st.session_state.file_pairs[i]['name']
+                ))
+                
+                # プレビュー表示
+                st.success(f"Pair{i+1}: {st.session_state.file_pairs[i]['fileA'].name} と {st.session_state.file_pairs[i]['fileB'].name} を比較")
+    
+    # ヘルプ情報を表示
     st.info("""
-    このツールは、2つの回路記号リストファイルを比較し、差分を抽出します。
-    入力ファイルは、1行に1つの回路記号が記載されたテキストファイルです。
+    このツールは、複数の回路記号リストファイルペアを比較し、各ペアごとに比較結果をExcelファイルに出力します。
     
-    比較結果は以下のような情報を含みます：
-    - 処理概要（各リストの総数、共通数、不足数）
-    - 図面に不足しているラベル（回路記号リストには存在する）
-    - 回路記号リストに不足しているラベル（図面には存在する）
+    1. 各ファイルペアを登録してください（最大5ペア）
+    2. 「出力Excelファイル名」を設定します
+    3. 「回路記号リストを比較」ボタンをクリックして処理を実行します
     
-    不足している部分を調整することで、図面と回路記号リストの整合性を確保できます。
+    入力ファイルは以下の形式に対応しています：
+    - 1行に1つの回路記号が記載されたテキストファイル
+    - CSVフォーマットの場合、1行目が回路記号、2列目がメーカー名、3列目が製品名として処理されます
+    
+    Excelファイルは以下の内容を含みます：
+    - 各ペアごとに個別のシートを作成
+    - サマリーシートで全体の比較結果を表示
+    - 各シートでは、ファイルAのみ、ファイルBのみ、両方に存在するが数が異なるラベルを色分けして表示
     """)
     
-    with st.expander("入力ファイルのフォーマット"):
-        st.markdown("""
-        ### 入力ファイルのフォーマット
-        
-        入力ファイルは、1行に1つの回路記号が記載されたシンプルなテキストファイルです。例えば：
-        
-        ```
-        R1
-        R2
-        C1
-        IC1
-        ```
-        
-        通常、「図面ラベル抽出」ツールまたは「Excel回路記号抽出」ツールで生成したテキストファイルを使用します。
-        
-        ### 比較の仕組み
-        
-        比較時には以下の処理が行われます：
-        
-        1. 各回路記号は正規化され、大文字に統一されます（例：「r1」→「R1」）
-        2. 重複する回路記号も考慮されます
-        3. ファイルAをDXF図面、ファイルBを回路記号リストとして比較を行います
-        
-        結果として、図面に存在しないラベルや回路記号リストに存在しないラベルを特定できます。
-        """)
-    
-    if uploaded_file_a is not None and uploaded_file_b is not None:
+    if file_pairs_valid:
         try:
             # ファイルが選択されたら処理ボタンを表示
-            if st.button("回路記号リストを比較"):
-                # ファイルを一時ディレクトリに保存
-                temp_file_a = save_uploadedfile(uploaded_file_a)
-                temp_file_b = save_uploadedfile(uploaded_file_b)
-                
-                with st.spinner('回路記号リストを比較中...'):
-                    # パーツリストの比較
-                    comparison_result = compare_parts_list(temp_file_a, temp_file_b)
+            if st.button("回路記号リストを比較", disabled=len(file_pairs_valid) == 0):
+                # 全てのファイルを一時ディレクトリに保存
+                with st.spinner('回路記号リストファイルを処理中...'):
+                    temp_file_pairs = []
                     
-                    # 結果を表示
-                    st.subheader("回路記号リスト差分抽出結果")
-                    st.markdown(comparison_result)
+                    # ファイルの保存とペア情報の作成
+                    # 元のファイル名を維持するために仕組みを変更
+                    for file_a, file_b, pair_name in file_pairs_valid:
+                        # 一時ファイルを保存
+                        temp_file_a = save_uploadedfile(file_a)
+                        temp_file_b = save_uploadedfile(file_b)
+                        
+                        # ファイル名情報を保持するために.nameを使う
+                        real_file_a = temp_file_a
+                        real_file_b = temp_file_b
+                        
+                        # ファイル名を追加 - 一時ファイルパスは使うが、シート表示用のファイル名はオリジナルのものに
+                        # ファイル名を変更
+                        try:
+                            # ディレクトリとファイル名を分離
+                            dir_a = os.path.dirname(temp_file_a)
+                            dir_b = os.path.dirname(temp_file_b)
+                            
+                            # 元のファイル名を取得
+                            orig_name_a = file_a.name
+                            orig_name_b = file_b.name
+                            
+                            # シンボリックリンクではなく、ファイル名を変更した新しい一時ファイルパスを作成
+                            new_temp_file_a = os.path.join(dir_a, f"orig_{orig_name_a}")
+                            new_temp_file_b = os.path.join(dir_b, f"orig_{orig_name_b}")
+                            
+                            # ファイル名を変更してコピー
+                            os.rename(temp_file_a, new_temp_file_a)
+                            os.rename(temp_file_b, new_temp_file_b)
+                            
+                            # 新しいパスを使用
+                            real_file_a = new_temp_file_a
+                            real_file_b = new_temp_file_b
+                        except Exception as e:
+                            st.warning(f"ファイル名の変更中にエラーが発生しました: {str(e)}")
+                            # エラーがあっても継続、元のパスを使用
+                            real_file_a = temp_file_a
+                            real_file_b = temp_file_b
+                        
+                        temp_file_pairs.append((real_file_a, real_file_b, pair_name))
                     
-                    # ダウンロードボタンを作成
-                    st.download_button(
-                        label="差分テキストファイルをダウンロード",
-                        data=comparison_result.encode('utf-8'),
-                        file_name=output_filename,
-                        mime="text/markdown",
-                    )
-                
-                # 一時ファイルの削除
-                try:
-                    os.unlink(temp_file_a)
-                    os.unlink(temp_file_b)
-                except:
-                    pass
+                    try:
+                        # Excel出力を生成
+                        excel_data = compare_parts_list_multi(temp_file_pairs)
+                        
+                        if excel_data is None:
+                            st.error("Excel出力の生成に失敗しました。データがNoneとして返されました。")
+                        else:
+                            # 結果を表示
+                            st.success(f"{len(file_pairs_valid)}ペアの回路記号リストの比較が完了しました")
+                            
+                            # ダウンロードボタンを作成
+                            st.download_button(
+                                label="Excel比較結果をダウンロード",
+                                data=excel_data,
+                                file_name=output_filename,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            )
+                    except Exception as e:
+                        st.error(f"処理中にエラーが発生しました: {str(e)}")
+                        st.text(traceback.format_exc())
+                    
+                    # 一時ファイルの削除
+                    for file_a, file_b, _ in temp_file_pairs:
+                        try:
+                            if os.path.exists(file_a):
+                                os.unlink(file_a)
+                            if os.path.exists(file_b):
+                                os.unlink(file_b)
+                        except Exception as e:
+                            st.warning(f"一時ファイルの削除中にエラー: {str(e)}")
         
         except Exception as e:
             handle_error(e)
     else:
-        st.info("比較対象となる2つのテキストファイルをアップロードしてください。")
+        st.warning("少なくとも1つのファイルペア（Aファイル、Bファイル）を登録してください。")
 
 if __name__ == "__main__":
     app()
