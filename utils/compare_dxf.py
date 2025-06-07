@@ -1,314 +1,863 @@
 import ezdxf
+import hashlib
+import json
 import math
-from ezdxf.addons.importer import Importer # Importerはブロックインポートで引き続き使用
+from collections import defaultdict
+from pathlib import Path
+from typing import Dict, List, Tuple, Set, Optional, Any
+from decimal import Decimal, getcontext
+import logging
+import numpy as np
+import tempfile
+import os
 
-# y_offset_for_file_b 引数を追加
-def compare_dxf_files_and_generate_dxf(file_a, file_b, output_file, tolerance=1e-6, y_offset_for_file_b=0.0):
+# 高精度計算設定
+getcontext().prec = 50
+
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+
+class ToleranceConfig:
+    """許容誤差設定クラス"""
+    
+    def __init__(self, base_tolerance: float = 0.01):
+        self.base_tolerance = base_tolerance
+        self.coordinate_tolerance = base_tolerance
+        self.connection_tolerance = base_tolerance * 0.1
+        self.text_position_tolerance = base_tolerance * 2
+        self.angle_tolerance = 0.1
+        self.length_tolerance = base_tolerance
+        
+    def get_tolerance_for_entity(self, entity_type: str, attribute: str = None) -> float:
+        """エンティティタイプ・属性に応じた許容誤差を取得"""
+        if entity_type in ['TEXT', 'MTEXT', 'ATTRIB']:
+            return self.text_position_tolerance
+        elif entity_type == 'POINT' or (attribute and 'connection' in attribute.lower()):
+            return self.connection_tolerance
+        elif attribute and any(angle_attr in attribute for angle_attr in ['angle', 'rotation']):
+            return self.angle_tolerance
+        else:
+            return self.coordinate_tolerance
+
+
+class CoordinateTransformer:
+    """座標変換専用クラス"""
+    
+    def __init__(self, tolerance_config: ToleranceConfig, debug: bool = False):
+        self.tolerance_config = tolerance_config
+        self.debug = debug
+        
+    def normalize_coordinate_precise(self, value: float, tolerance: float) -> float:
+        """高精度座標正規化"""
+        if tolerance <= 0:
+            return value
+        
+        try:
+            decimal_value = Decimal(str(value))
+            decimal_tolerance = Decimal(str(tolerance))
+            normalized = (decimal_value / decimal_tolerance).quantize(Decimal('1')) * decimal_tolerance
+            return float(normalized)
+        except Exception:
+            return round(value / tolerance) * tolerance
+    
+    def normalize_coordinate_with_context(self, coord: Any, entity_type: str, 
+                                        attribute: str = None) -> Any:
+        """コンテキストを考慮した座標正規化"""
+        tolerance = self.tolerance_config.get_tolerance_for_entity(entity_type, attribute)
+        
+        if hasattr(coord, 'x') and hasattr(coord, 'y') and hasattr(coord, 'z'):
+            return tuple(
+                self.normalize_coordinate_precise(float(c), tolerance) 
+                for c in [coord.x, coord.y, coord.z]
+            )
+        elif isinstance(coord, (tuple, list)):
+            return tuple(
+                self.normalize_coordinate_precise(float(c), tolerance) 
+                for c in coord
+            )
+        elif isinstance(coord, (int, float)):
+            return self.normalize_coordinate_precise(float(coord), tolerance)
+        
+        return coord
+    
+    def create_transformation_matrix(self, insert_entity) -> np.ndarray:
+        """INSERTエンティティから4x4変換行列を作成"""
+        try:
+            # 挿入点
+            insert_point = getattr(insert_entity.dxf, 'insert', (0, 0, 0))
+            if hasattr(insert_point, 'x'):
+                tx, ty, tz = float(insert_point.x), float(insert_point.y), float(getattr(insert_point, 'z', 0))
+            else:
+                coords = list(insert_point) if insert_point else [0, 0, 0]
+                tx = float(coords[0]) if len(coords) > 0 else 0.0
+                ty = float(coords[1]) if len(coords) > 1 else 0.0
+                tz = float(coords[2]) if len(coords) > 2 else 0.0
+            
+            # 回転角度
+            rotation_deg = getattr(insert_entity.dxf, 'rotation', 0.0)
+            rotation = math.radians(float(rotation_deg))
+            
+            # スケール
+            xscale = float(getattr(insert_entity.dxf, 'xscale', 1.0))
+            yscale = float(getattr(insert_entity.dxf, 'yscale', 1.0))
+            zscale = float(getattr(insert_entity.dxf, 'zscale', 1.0))
+            
+            # 変換行列を作成
+            scale_matrix = np.array([
+                [xscale, 0.0, 0.0, 0.0],
+                [0.0, yscale, 0.0, 0.0],
+                [0.0, 0.0, zscale, 0.0],
+                [0.0, 0.0, 0.0, 1.0]
+            ], dtype=np.float64)
+            
+            cos_r, sin_r = math.cos(rotation), math.sin(rotation)
+            rotation_matrix = np.array([
+                [cos_r, -sin_r, 0.0, 0.0],
+                [sin_r, cos_r, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0]
+            ], dtype=np.float64)
+            
+            translation_matrix = np.array([
+                [1.0, 0.0, 0.0, tx],
+                [0.0, 1.0, 0.0, ty],
+                [0.0, 0.0, 1.0, tz],
+                [0.0, 0.0, 0.0, 1.0]
+            ], dtype=np.float64)
+            
+            return translation_matrix @ rotation_matrix @ scale_matrix
+            
+        except Exception as e:
+            logger.warning(f"Error creating transformation matrix: {e}")
+            return np.eye(4, dtype=np.float64)
+    
+    def transform_point(self, point: Tuple[float, float, float], 
+                       transform_matrix: np.ndarray) -> Tuple[float, float, float]:
+        """点を変換行列で変換"""
+        try:
+            if len(point) == 2:
+                point = (point[0], point[1], 0.0)
+            elif len(point) < 2:
+                point = (point[0] if point else 0.0, 0.0, 0.0)
+            
+            homogeneous_point = np.array([point[0], point[1], point[2], 1.0])
+            transformed = transform_matrix @ homogeneous_point
+            return (float(transformed[0]), float(transformed[1]), float(transformed[2]))
+            
+        except Exception:
+            return point
+    
+    def extract_scale_factors(self, transform_matrix: np.ndarray) -> Tuple[float, float, float]:
+        """変換行列からスケールファクターを抽出"""
+        try:
+            scale_x = math.sqrt(transform_matrix[0, 0]**2 + transform_matrix[1, 0]**2)
+            scale_y = math.sqrt(transform_matrix[0, 1]**2 + transform_matrix[1, 1]**2)
+            scale_z = math.sqrt(transform_matrix[0, 2]**2 + transform_matrix[1, 2]**2 + transform_matrix[2, 2]**2)
+            return (scale_x, scale_y, scale_z)
+        except Exception:
+            return (1.0, 1.0, 1.0)
+
+
+class EntityExpander:
+    """INSERTエンティティ展開専用クラス"""
+    
+    def __init__(self, transformer: CoordinateTransformer, debug: bool = False):
+        self.transformer = transformer
+        self.debug = debug
+        self.excluded_attributes = {
+            'handle', 'owner', 'reactors', 'dictionary', 'extension_dict',
+            'objectid', 'uuid', 'app_data', 'doc', 'entitydb', 'is_alive', 
+            'is_virtual', 'is_copy', 'soft_pointer_ids', 'hard_pointer_ids'
+        }
+    
+    def safe_get_dxf_attributes(self, entity) -> Dict:
+        """安全なDXF属性取得"""
+        try:
+            all_attrs = entity.dxf.all_existing_dxf_attribs()
+            clean_attrs = {k: v for k, v in all_attrs.items() 
+                          if k not in self.excluded_attributes}
+            
+            # LWPOLYLINE特別処理
+            if entity.dxftype() == 'LWPOLYLINE':
+                vertices = self._extract_lwpolyline_vertices(entity)
+                if vertices:
+                    clean_attrs['vertices'] = vertices
+            
+            return clean_attrs
+            
+        except Exception as e:
+            if self.debug:
+                logger.debug(f"Error getting attributes for {entity.dxftype()}: {e}")
+            return {}
+    
+    def _extract_lwpolyline_vertices(self, entity) -> List[Tuple[float, float]]:
+        """LWPOLYLINE頂点情報を抽出"""
+        vertices = []
+        
+        # 複数の方法で頂点を取得を試行
+        methods = [
+            lambda: list(entity.get_points()) if hasattr(entity, 'get_points') else [],
+            lambda: [(v.x, v.y) for v in entity.vertices] if hasattr(entity, 'vertices') else [],
+            lambda: [(v[0], v[1]) for v in entity.vertices] if hasattr(entity, 'vertices') else []
+        ]
+        
+        for method in methods:
+            try:
+                points = method()
+                if points:
+                    vertices = [(float(p[0]), float(p[1])) for p in points if len(p) >= 2]
+                    break
+            except Exception:
+                continue
+        
+        return vertices
+    
+    def transform_entity_to_absolute(self, entity, transform_matrix: np.ndarray) -> Optional[Dict]:
+        """エンティティを絶対座標に変換"""
+        try:
+            entity_type = entity.dxftype()
+            clean_attrs = self.safe_get_dxf_attributes(entity)
+            transformed_attrs = clean_attrs.copy()
+            
+            # スケールファクターを抽出
+            scale_x, scale_y, scale_z = self.transformer.extract_scale_factors(transform_matrix)
+            is_scaled = not all(math.isclose(s, 1.0, rel_tol=1e-6) for s in [scale_x, scale_y, scale_z])
+            
+            # 座標属性を変換
+            self._transform_coordinate_attributes(clean_attrs, transformed_attrs, transform_matrix)
+            
+            # サイズ関連属性の変換
+            if is_scaled:
+                self._transform_size_attributes(entity_type, clean_attrs, transformed_attrs, 
+                                              scale_x, scale_y, scale_z)
+            
+            # テキスト内容の取得
+            text_content = getattr(entity, 'text', None) or getattr(entity.dxf, 'text', None)
+            
+            return {
+                'dxftype': entity_type,
+                'attributes': transformed_attrs,
+                'text_content': text_content,
+                'is_transformed': True,
+                'original_entity_id': id(entity),
+                'scale_factors': (scale_x, scale_y, scale_z) if is_scaled else None
+            }
+            
+        except Exception as e:
+            logger.warning(f"Error transforming entity {entity.dxftype()}: {e}")
+            return None
+    
+    def _transform_coordinate_attributes(self, clean_attrs: Dict, transformed_attrs: Dict, 
+                                       transform_matrix: np.ndarray):
+        """座標属性を変換"""
+        coordinate_attrs = ['insert', 'center', 'start', 'end', 'location', 'base_point']
+        
+        for attr_name in coordinate_attrs:
+            if attr_name in clean_attrs:
+                original_point = clean_attrs[attr_name]
+                try:
+                    if hasattr(original_point, 'x'):
+                        point_tuple = (original_point.x, original_point.y, 
+                                     getattr(original_point, 'z', 0.0))
+                    else:
+                        point_tuple = tuple(original_point)
+                    
+                    transformed_point = self.transformer.transform_point(point_tuple, transform_matrix)
+                    transformed_attrs[attr_name] = transformed_point
+                    
+                except Exception:
+                    pass
+        
+        # LWPOLYLINE頂点の変換
+        if 'vertices' in clean_attrs:
+            original_vertices = clean_attrs['vertices']
+            transformed_vertices = []
+            
+            for vertex in original_vertices:
+                if len(vertex) >= 2:
+                    vertex_3d = (vertex[0], vertex[1], 0.0) if len(vertex) == 2 else vertex
+                    transformed_vertex = self.transformer.transform_point(vertex_3d, transform_matrix)
+                    transformed_vertices.append(transformed_vertex[:2])
+            
+            transformed_attrs['vertices'] = transformed_vertices
+    
+    def _transform_size_attributes(self, entity_type: str, clean_attrs: Dict, 
+                                 transformed_attrs: Dict, scale_x: float, scale_y: float, scale_z: float):
+        """サイズ関連属性の変換"""
+        if entity_type in ['CIRCLE', 'ARC'] and 'radius' in clean_attrs:
+            avg_scale = (scale_x + scale_y) / 2.0
+            transformed_attrs['radius'] = clean_attrs['radius'] * avg_scale
+        
+        if entity_type in ['TEXT', 'MTEXT', 'ATTRIB'] and 'height' in clean_attrs:
+            transformed_attrs['height'] = clean_attrs['height'] * scale_y
+    
+    def expand_insert_entities(self, doc, doc_label: str) -> List[Dict]:
+        """INSERTエンティティを展開して絶対座標エンティティリストを作成"""
+        expanded_entities = []
+        
+        msp = doc.modelspace()
+        for entity in msp:
+            entity_type = entity.dxftype()
+            
+            if entity_type == 'INSERT':
+                try:
+                    transform_matrix = self.transformer.create_transformation_matrix(entity)
+                    block_name = entity.dxf.name
+                    
+                    if block_name in doc.blocks:
+                        block = doc.blocks[block_name]
+                        
+                        # ブロック内エンティティを変換
+                        for block_entity in block:
+                            if block_entity.dxftype() not in ['ATTDEF']:
+                                absolute_entity = self.transform_entity_to_absolute(
+                                    block_entity, transform_matrix)
+                                if absolute_entity:
+                                    absolute_entity['insert_info'] = {
+                                        'block_name': block_name,
+                                        'insert_point': tuple(entity.dxf.insert),
+                                        'rotation': getattr(entity.dxf, 'rotation', 0.0),
+                                        'scale': (
+                                            getattr(entity.dxf, 'xscale', 1.0),
+                                            getattr(entity.dxf, 'yscale', 1.0),
+                                            getattr(entity.dxf, 'zscale', 1.0)
+                                        )
+                                    }
+                                    expanded_entities.append(absolute_entity)
+                        
+                        # ATTRIB処理
+                        if hasattr(entity, 'attribs'):
+                            for attrib in entity.attribs:
+                                identity_matrix = np.eye(4)
+                                absolute_attrib = self.transform_entity_to_absolute(
+                                    attrib, identity_matrix)
+                                if absolute_attrib:
+                                    absolute_attrib['insert_info'] = {
+                                        'block_name': block_name,
+                                        'insert_point': tuple(entity.dxf.insert),
+                                        'is_insert_attrib': True
+                                    }
+                                    expanded_entities.append(absolute_attrib)
+                                    
+                except Exception as e:
+                    logger.warning(f"Error expanding INSERT {block_name}: {e}")
+            
+            elif entity_type != 'ATTDEF':
+                # 直接エンティティ
+                identity_matrix = np.eye(4)
+                absolute_entity = self.transform_entity_to_absolute(entity, identity_matrix)
+                if absolute_entity:
+                    absolute_entity['is_direct_modelspace'] = True
+                    expanded_entities.append(absolute_entity)
+        
+        return expanded_entities
+
+
+class SignatureGenerator:
+    """エンティティ署名生成専用クラス"""
+    
+    def __init__(self, transformer: CoordinateTransformer, debug: bool = False):
+        self.transformer = transformer
+        self.debug = debug
+    
+    def create_absolute_entity_signature(self, absolute_entity: Dict) -> str:
+        """絶対座標エンティティの署名生成"""
+        try:
+            entity_type = absolute_entity['dxftype']
+            attrs = absolute_entity['attributes']
+            
+            signature_parts = [entity_type]
+            
+            # 主要位置情報
+            position = None
+            for pos_attr in ['insert', 'center', 'start', 'location']:
+                if pos_attr in attrs:
+                    position = attrs[pos_attr]
+                    break
+            
+            if position:
+                normalized_pos = self.transformer.normalize_coordinate_with_context(position, entity_type)
+                signature_parts.append(f"pos_{normalized_pos}")
+            
+            # INSERT位置情報
+            insert_info = absolute_entity.get('insert_info')
+            if insert_info and not absolute_entity.get('is_direct_modelspace'):
+                insert_point = insert_info.get('insert_point')
+                if insert_point:
+                    normalized_insert = self.transformer.normalize_coordinate_with_context(
+                        insert_point, entity_type)
+                    signature_parts.append(f"from_insert_{normalized_insert}")
+            
+            # テキスト内容
+            text_content = absolute_entity.get('text_content')
+            if text_content and text_content.strip():
+                clean_text = text_content.strip().replace('\n', '').replace('\r', '')
+                signature_parts.append(f"text_{clean_text}")
+            
+            # ATTRIB固有情報
+            if entity_type == 'ATTRIB':
+                attrib_tag = absolute_entity.get('attrib_tag', '')
+                signature_parts.append(f"tag_{attrib_tag}")
+            
+            # 重要な属性
+            self._add_important_attributes(signature_parts, attrs, entity_type, absolute_entity)
+            
+            # ジオメトリ詳細
+            self._add_geometry_details(signature_parts, entity_type, attrs)
+            
+            return "_".join(str(p) for p in signature_parts)
+            
+        except Exception as e:
+            if self.debug:
+                logger.debug(f"Error creating signature: {e}")
+            return f"{entity_type}_error_{id(absolute_entity)}"
+    
+    def _add_important_attributes(self, signature_parts: List, attrs: Dict, 
+                                entity_type: str, absolute_entity: Dict):
+        """重要な属性を署名に追加"""
+        important_attrs = ['layer', 'color', 'height', 'radius', 'start_angle', 'end_angle']
+        
+        for attr_name in important_attrs:
+            if attr_name in attrs:
+                value = attrs[attr_name]
+                if isinstance(value, (int, float)):
+                    if attr_name in ['height', 'radius'] and absolute_entity.get('scale_factors'):
+                        tolerance = self.transformer.tolerance_config.get_tolerance_for_entity(
+                            entity_type, attr_name) * 2
+                    else:
+                        tolerance = self.transformer.tolerance_config.get_tolerance_for_entity(
+                            entity_type, attr_name)
+                    value = self.transformer.normalize_coordinate_precise(float(value), tolerance)
+                signature_parts.append(f"{attr_name}_{value}")
+        
+        # 回転角度の特別処理
+        if 'rotation' in attrs:
+            rotation = attrs['rotation']
+            if isinstance(rotation, (int, float)):
+                normalized_rotation = float(rotation) % (2 * math.pi)
+                angle_tolerance = self.transformer.tolerance_config.angle_tolerance
+                normalized_rotation = self.transformer.normalize_coordinate_precise(
+                    normalized_rotation, math.radians(angle_tolerance))
+                signature_parts.append(f"rotation_{normalized_rotation}")
+    
+    def _add_geometry_details(self, signature_parts: List, entity_type: str, attrs: Dict):
+        """ジオメトリ詳細を署名に追加"""
+        if entity_type == 'LINE' and 'start' in attrs and 'end' in attrs:
+            start = self.transformer.normalize_coordinate_with_context(attrs['start'], entity_type)
+            end = self.transformer.normalize_coordinate_with_context(attrs['end'], entity_type)
+            signature_parts.append(f"line_{start}_{end}")
+        
+        elif entity_type == 'CIRCLE' and 'center' in attrs and 'radius' in attrs:
+            center = self.transformer.normalize_coordinate_with_context(attrs['center'], entity_type)
+            radius = self.transformer.normalize_coordinate_precise(
+                attrs['radius'], self.transformer.tolerance_config.length_tolerance)
+            signature_parts.append(f"circle_{center}_{radius}")
+        
+        elif entity_type == 'ARC' and 'center' in attrs:
+            center = self.transformer.normalize_coordinate_with_context(attrs['center'], entity_type)
+            radius = self.transformer.normalize_coordinate_precise(
+                attrs.get('radius', 0), self.transformer.tolerance_config.length_tolerance)
+            start_angle = self.transformer.normalize_coordinate_precise(
+                attrs.get('start_angle', 0), 
+                math.radians(self.transformer.tolerance_config.angle_tolerance))
+            end_angle = self.transformer.normalize_coordinate_precise(
+                attrs.get('end_angle', 0), 
+                math.radians(self.transformer.tolerance_config.angle_tolerance))
+            signature_parts.append(f"arc_{center}_{radius}_{start_angle}_{end_angle}")
+        
+        elif entity_type == 'LWPOLYLINE' and 'vertices' in attrs:
+            vertices = attrs['vertices']
+            if vertices:
+                normalized_vertices = []
+                for vertex in vertices[:5]:  # 最初の5頂点のみ
+                    if len(vertex) >= 2:
+                        norm_vertex = self.transformer.normalize_coordinate_with_context(
+                            (vertex[0], vertex[1]), entity_type)
+                        normalized_vertices.append(norm_vertex)
+                if normalized_vertices:
+                    signature_parts.append(f"lwpoly_vertices_{normalized_vertices}")
+
+
+class DiffAnalyzer:
+    """差分検出専用クラス"""
+    
+    def __init__(self, signature_generator: SignatureGenerator, debug: bool = False):
+        self.signature_generator = signature_generator
+        self.debug = debug
+    
+    def generate_enhanced_hash(self, entity_data: Dict) -> Optional[str]:
+        """改善されたハッシュ生成"""
+        if entity_data is None:
+            return None
+        
+        try:
+            signature = entity_data.get('absolute_signature', '')
+            if signature:
+                hash_value = hashlib.sha256(signature.encode('utf-8')).hexdigest()
+            else:
+                json_str = json.dumps(entity_data, sort_keys=True, ensure_ascii=False, 
+                                    separators=(',', ':'), default=str)
+                hash_value = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
+            
+            return hash_value
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate hash: {e}")
+            return None
+    
+    def create_entity_data_from_absolute(self, absolute_entity: Dict) -> Optional[Dict]:
+        """絶対座標エンティティからハッシュ用データ作成"""
+        try:
+            absolute_signature = self.signature_generator.create_absolute_entity_signature(absolute_entity)
+            
+            entity_data = {
+                'dxftype': absolute_entity['dxftype'],
+                'absolute_signature': absolute_signature,
+                'attributes': absolute_entity['attributes'],
+                'text_content': absolute_entity.get('text_content'),
+                'is_transformed': absolute_entity.get('is_transformed', False)
+            }
+            
+            if absolute_entity['dxftype'] == 'ATTRIB':
+                if 'attrib_tag' in absolute_entity:
+                    entity_data['attrib_tag'] = absolute_entity['attrib_tag']
+            
+            if 'insert_info' in absolute_entity:
+                entity_data['insert_info'] = absolute_entity['insert_info']
+            
+            self._extract_geometry_details(absolute_entity, entity_data)
+            
+            return entity_data
+            
+        except Exception as e:
+            logger.warning(f"Error creating entity data: {e}")
+            return None
+    
+    def _extract_geometry_details(self, absolute_entity: Dict, entity_data: Dict):
+        """ジオメトリ詳細情報の抽出"""
+        try:
+            entity_type = absolute_entity['dxftype']
+            attrs = absolute_entity['attributes']
+            
+            if entity_type == 'LINE' and 'start' in attrs and 'end' in attrs:
+                start = self.signature_generator.transformer.normalize_coordinate_with_context(
+                    attrs['start'], entity_type)
+                end = self.signature_generator.transformer.normalize_coordinate_with_context(
+                    attrs['end'], entity_type)
+                entity_data['line_geometry'] = {'start': start, 'end': end}
+            
+            elif entity_type == 'CIRCLE' and 'center' in attrs and 'radius' in attrs:
+                center = self.signature_generator.transformer.normalize_coordinate_with_context(
+                    attrs['center'], entity_type)
+                entity_data['circle_geometry'] = {'center': center, 'radius': attrs['radius']}
+            
+            elif entity_type == 'ARC' and 'center' in attrs:
+                center = self.signature_generator.transformer.normalize_coordinate_with_context(
+                    attrs['center'], entity_type)
+                entity_data['arc_geometry'] = {
+                    'center': center, 
+                    'radius': attrs.get('radius', 0),
+                    'start_angle': attrs.get('start_angle', 0), 
+                    'end_angle': attrs.get('end_angle', 0)
+                }
+                
+        except Exception:
+            pass
+    
+    def extract_entities_from_doc(self, doc, doc_label: str, expander: EntityExpander) -> Tuple[Dict[str, List], Dict[str, Dict], Dict[str, Set[str]]]:
+        """ドキュメントからエンティティを抽出"""
+        entities_by_hash = defaultdict(list)
+        hash_to_entity_data = {}
+        hash_to_locations = defaultdict(set)
+        
+        absolute_entities = expander.expand_insert_entities(doc, doc_label)
+        
+        for absolute_entity in absolute_entities:
+            try:
+                entity_data = self.create_entity_data_from_absolute(absolute_entity)
+                if entity_data:
+                    entity_hash = self.generate_enhanced_hash(entity_data)
+                    if entity_hash:
+                        if absolute_entity.get('is_direct_modelspace'):
+                            location = 'modelspace'
+                        else:
+                            insert_info = absolute_entity.get('insert_info', {})
+                            block_name = insert_info.get('block_name', 'unknown')
+                            location = f"expanded_from_{block_name}"
+                        
+                        virtual_entity = {
+                            'data': entity_data,
+                            'absolute_entity': absolute_entity
+                        }
+                        
+                        entities_by_hash[entity_hash].append((location, virtual_entity))
+                        hash_to_entity_data[entity_hash] = entity_data
+                        hash_to_locations[entity_hash].add(location)
+                        
+            except Exception as e:
+                logger.warning(f"Error processing entity: {e}")
+        
+        return entities_by_hash, hash_to_entity_data, hash_to_locations
+
+
+class LayerConfig:
+    """レイヤー設定クラス"""
+    
+    def __init__(self, deleted_color: int = 1, added_color: int = 3, unchanged_color: int = 4):
+        self.layer_settings = {
+            'DELETED': {
+                'name': 'DELETED',
+                'color': deleted_color,  # デフォルト: 赤
+                'description': 'Entities present in file A but not in file B'
+            },
+            'ADDED': {
+                'name': 'ADDED', 
+                'color': added_color,  # デフォルト: 緑
+                'description': 'Entities present in file B but not in file A'
+            },
+            'UNCHANGED': {
+                'name': 'UNCHANGED',
+                'color': unchanged_color,  # デフォルト: シアン
+                'description': 'Entities present in both files'
+            }
+        }
+    
+    def get_layer_name(self, diff_type: str) -> str:
+        """差分タイプからレイヤー名を取得"""
+        return self.layer_settings.get(diff_type.upper(), {}).get('name', '0')
+    
+    def get_layer_color(self, diff_type: str) -> int:
+        """差分タイプからレイヤー色を取得"""
+        return self.layer_settings.get(diff_type.upper(), {}).get('color', 256)
+
+
+class OutputGenerator:
+    """出力生成専用クラス"""
+    
+    def __init__(self, transformer: CoordinateTransformer, layer_config: LayerConfig, debug: bool = False):
+        self.transformer = transformer
+        self.layer_config = layer_config
+        self.debug = debug
+        self.excluded_attributes = {
+            'handle', 'owner', 'reactors', 'dictionary', 'extension_dict',
+            'objectid', 'uuid', 'app_data', 'doc', 'entitydb', 'is_alive', 
+            'is_virtual', 'is_copy', 'soft_pointer_ids', 'hard_pointer_ids'
+        }
+    
+    def create_entity_from_absolute(self, absolute_entity: Dict, target_space, layer_name: str, layer_color: int) -> bool:
+        """絶対座標エンティティから実際のDXFエンティティを作成（レイヤー指定）"""
+        try:
+            entity_type = absolute_entity['dxftype']
+            attrs = absolute_entity['attributes']
+            
+            dxfattribs = {k: v for k, v in attrs.items() 
+                         if k not in self.excluded_attributes and v is not None}
+            
+            # レイヤーと色を設定
+            dxfattribs['layer'] = layer_name
+            dxfattribs['color'] = layer_color
+            
+            if entity_type == 'LINE':
+                start = attrs.get('start', (0, 0, 0))
+                end = attrs.get('end', (1, 1, 0))
+                target_space.add_line(start=start, end=end, dxfattribs=dxfattribs)
+                
+            elif entity_type == 'CIRCLE':
+                center = attrs.get('center', (0, 0, 0))
+                radius = attrs.get('radius', 1.0)
+                target_space.add_circle(center=center, radius=radius, dxfattribs=dxfattribs)
+                
+            elif entity_type == 'ARC':
+                center = attrs.get('center', (0, 0, 0))
+                radius = attrs.get('radius', 1.0)
+                start_angle = attrs.get('start_angle', 0.0)
+                end_angle = attrs.get('end_angle', 90.0)
+                target_space.add_arc(center=center, radius=radius,
+                                   start_angle=start_angle, end_angle=end_angle,
+                                   dxfattribs=dxfattribs)
+                
+            elif entity_type == 'TEXT':
+                text_content = absolute_entity.get('text_content', '')
+                insert_pos = attrs.get('insert', (0, 0, 0))
+                text_attrs = dxfattribs.copy()
+                text_attrs['insert'] = insert_pos
+                target_space.add_text(text=text_content, dxfattribs=text_attrs)
+                
+            elif entity_type == 'MTEXT':
+                text_content = absolute_entity.get('text_content', '')
+                insert_pos = attrs.get('insert', (0, 0, 0))
+                text_attrs = dxfattribs.copy()
+                text_attrs['insert'] = insert_pos
+                target_space.add_mtext(text=text_content, dxfattribs=text_attrs)
+                
+            elif entity_type == 'ATTRIB':
+                text_content = absolute_entity.get('text_content', '')
+                attrib_tag = absolute_entity.get('attrib_tag', '')
+                insert_pos = attrs.get('insert', (0, 0, 0))
+                
+                display_text = text_content if text_content else f"[{attrib_tag}]"
+                text_height = dxfattribs.get('height', 2.5)
+                
+                target_space.add_text(
+                    text=display_text,
+                    dxfattribs={
+                        'layer': layer_name,
+                        'insert': insert_pos,
+                        'height': text_height,
+                        'rotation': dxfattribs.get('rotation', 0.0),
+                        'color': layer_color,
+                        'style': dxfattribs.get('style', 'Standard')
+                    }
+                )
+                
+            elif entity_type == 'POINT':
+                location = attrs.get('location', (0, 0, 0))
+                target_space.add_point(location=location, dxfattribs=dxfattribs)
+            
+            elif entity_type == 'LWPOLYLINE':
+                vertices = attrs.get('vertices', [])
+                if vertices:
+                    vertex_points = [(v[0], v[1]) for v in vertices if len(v) >= 2]
+                    if vertex_points:
+                        new_entity = target_space.add_lwpolyline(points=vertex_points)
+                        new_entity.dxf.layer = layer_name
+                        new_entity.dxf.color = layer_color
+                        if len(vertex_points) >= 3:
+                            new_entity.close()
+            
+            else:
+                # サポートされていないエンティティ
+                insert_pos = attrs.get('insert', attrs.get('center', (0, 0, 0)))
+                target_space.add_text(
+                    text=f"[{entity_type}]",
+                    dxfattribs={
+                        'layer': layer_name, 
+                        'insert': insert_pos,
+                        'height': 2.5,
+                        'color': layer_color
+                    }
+                )
+            
+            return True
+                
+        except Exception as e:
+            if self.debug:
+                logger.debug(f"Error creating entity {entity_type}: {e}")
+            return False
+    
+    def create_diff_dxf(self, entities_a: Dict, entities_b: Dict, 
+                        deleted_hashes: Set[str], added_hashes: Set[str], 
+                        common_hashes: Set[str], output_file: str):
+        """差分DXFファイルを作成"""
+        try:
+            new_doc = ezdxf.new('R2010', setup=True)
+            msp = new_doc.modelspace()
+            
+            # レイヤーを作成
+            layers = new_doc.layers
+            for diff_type in ['DELETED', 'ADDED', 'UNCHANGED']:
+                layer_name = self.layer_config.get_layer_name(diff_type)
+                layer_color = self.layer_config.get_layer_color(diff_type)
+                layer = layers.new(layer_name)
+                layer.color = layer_color
+            
+            # DELETED エンティティを追加
+            layer_name = self.layer_config.get_layer_name('DELETED')
+            layer_color = self.layer_config.get_layer_color('DELETED')
+            
+            for entity_hash in deleted_hashes:
+                if entity_hash in entities_a:
+                    for location, virtual_entity in entities_a[entity_hash]:
+                        absolute_entity = virtual_entity['absolute_entity']
+                        self.create_entity_from_absolute(absolute_entity, msp, layer_name, layer_color)
+                        break  # 最初のインスタンスのみ
+            
+            # ADDED エンティティを追加
+            layer_name = self.layer_config.get_layer_name('ADDED')
+            layer_color = self.layer_config.get_layer_color('ADDED')
+            
+            for entity_hash in added_hashes:
+                if entity_hash in entities_b:
+                    for location, virtual_entity in entities_b[entity_hash]:
+                        absolute_entity = virtual_entity['absolute_entity']
+                        self.create_entity_from_absolute(absolute_entity, msp, layer_name, layer_color)
+                        break  # 最初のインスタンスのみ
+            
+            # UNCHANGED エンティティを追加
+            layer_name = self.layer_config.get_layer_name('UNCHANGED')
+            layer_color = self.layer_config.get_layer_color('UNCHANGED')
+            
+            for entity_hash in common_hashes:
+                if entity_hash in entities_a:
+                    for location, virtual_entity in entities_a[entity_hash]:
+                        absolute_entity = virtual_entity['absolute_entity']
+                        self.create_entity_from_absolute(absolute_entity, msp, layer_name, layer_color)
+                        break  # 最初のインスタンスのみ
+            
+            # DXFファイルを保存
+            new_doc.saveas(output_file)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error creating diff DXF file {output_file}: {e}")
+            return False
+
+
+def compare_dxf_files_and_generate_dxf(file_a: str, file_b: str, output_file: str, 
+                                       tolerance: float = 0.01, 
+                                       deleted_color: int = 1, 
+                                       added_color: int = 3, 
+                                       unchanged_color: int = 4) -> bool:
+    """
+    DXFファイル比較メイン処理（Streamlit用インターフェース）
+    
+    Args:
+        file_a: 基準DXFファイルパス
+        file_b: 比較対象DXFファイルパス
+        output_file: 出力DXFファイルパス
+        tolerance: 座標許容誤差
+        deleted_color: 削除エンティティの色（デフォルト: 1=赤）
+        added_color: 追加エンティティの色（デフォルト: 3=緑）
+        unchanged_color: 変更なしエンティティの色（デフォルト: 4=シアン）
+        
+    Returns:
+        bool: 成功した場合True、失敗した場合False
+    """
     try:
+        # 設定の初期化
+        tolerance_config = ToleranceConfig(tolerance)
+        transformer = CoordinateTransformer(tolerance_config, debug=False)
+        expander = EntityExpander(transformer, debug=False)
+        signature_generator = SignatureGenerator(transformer, debug=False)
+        diff_analyzer = DiffAnalyzer(signature_generator, debug=False)
+        layer_config = LayerConfig(deleted_color, added_color, unchanged_color)
+        output_generator = OutputGenerator(transformer, layer_config, debug=False)
+        
+        # DXFファイル読み込み
         doc_a = ezdxf.readfile(file_a)
         doc_b = ezdxf.readfile(file_b)
-        doc_result = ezdxf.new('R2010')
-
-        # --- ブロック定義のインポート (前回の修正を維持) ---
-        if doc_a:
-            print(f"Importing blocks from file_a...")
-            try:
-                importer_a = Importer(doc_a, doc_result)
-                block_names_a = [block.name for block in doc_a.blocks if not block.name.lower().startswith('*')]
-                if block_names_a:
-                    importer_a.import_blocks(block_names_a) # block_names引数を渡す
-                    print(f"Blocks imported from file_a: {len(block_names_a)} blocks processed.")
-                else:
-                    print(f"No user-defined blocks found in file_a to import.")
-            except Exception as import_e_a:
-                print(f"DXF block import (file_a) error: {str(import_e_a)}")
-
-        if doc_b:
-            print(f"Importing blocks from file_b...")
-            try:
-                importer_b = Importer(doc_b, doc_result)
-                block_names_b = [block.name for block in doc_b.blocks if not block.name.lower().startswith('*')]
-                blocks_to_import_from_b = [bn for bn in block_names_b if bn not in doc_result.blocks]
-                if blocks_to_import_from_b:
-                    importer_b.import_blocks(blocks_to_import_from_b) # block_names引数を渡す
-                    print(f"Blocks imported from file_b: {len(blocks_to_import_from_b)} blocks processed.")
-                else:
-                    print(f"No new user-defined blocks found in file_b to import.")
-            except Exception as import_e_b:
-                print(f"DXF block import (file_b) error: {str(import_e_b)}")
-        # --- インポート処理ここまで ---
-
-        # レイヤー作成
-        doc_result.layers.new(name='ADDED', dxfattribs={'color': 3})
-        doc_result.layers.new(name='REMOVED', dxfattribs={'color': 1})
-        doc_result.layers.new(name='MODIFIED', dxfattribs={'color': 5})
-        doc_result.layers.new(name='UNCHANGED', dxfattribs={'color': 7})
-
-        msp_a = doc_a.modelspace()
-        msp_b = doc_b.modelspace()
-        msp_result = doc_result.modelspace()
-
-        entities_a = {}
-        entities_b = {}
-
-        # ファイルAのエンティティを処理 (オフセットなし)
-        for entity in msp_a:
-            key = get_entity_key(entity, tolerance, y_offset=0.0) # y_offset引数を追加
-            entities_a[key] = entity
-
-        # ファイルBのエンティティを処理 (指定されたYオフセットを適用)
-        for entity in msp_b:
-            key = get_entity_key(entity, tolerance, y_offset=y_offset_for_file_b) # y_offset引数を追加
-            entities_b[key] = entity
-
-        processed_b_keys = set()
-
-        for key_a, entity_a_val in entities_a.items():
-            if key_a in entities_b: # entities_bのキーはオフセット補正済み
-                entity_b_val = entities_b[key_a]
-                processed_b_keys.add(key_a) # entities_b側のキーとして記録 (key_aとkey_bは同じはず)
-                # is_entity_modifiedにもオフセットを渡して比較
-                if is_entity_modified(entity_a_val, entity_b_val, tolerance, y_offset_for_b=y_offset_for_file_b):
-                    # 変更ありと判断された場合、file_b のエンティティを元の座標でコピー
-                    copy_entity_to_result(entity_b_val, msp_result, 'MODIFIED')
-                else:
-                    # 変更なしと判断された場合、file_a (またはfile_bの元の座標で) のエンティティをコピー
-                    copy_entity_to_result(entity_a_val, msp_result, 'UNCHANGED')
-            else: # entities_a にのみ存在 (オフセット考慮後の比較で)
-                copy_entity_to_result(entity_a_val, msp_result, 'REMOVED')
-
-        # entities_b にのみ存在するものを ADDED として処理
-        for key_b, entity_b_val in entities_b.items():
-            if key_b not in processed_b_keys: # entities_a のキーセット(オフセット0で生成) と比較するのではなく、
-                                             # processed_b_keys にないものを処理
-                copy_entity_to_result(entity_b_val, msp_result, 'ADDED')
-
-        doc_result.saveas(output_file)
-        return True
+        
+        # エンティティ抽出
+        entities_a, data_a, locations_a = diff_analyzer.extract_entities_from_doc(
+            doc_a, "A", expander)
+        entities_b, data_b, locations_b = diff_analyzer.extract_entities_from_doc(
+            doc_b, "B", expander)
+        
+        # 差分計算
+        hashes_a = set(entities_a.keys())
+        hashes_b = set(entities_b.keys())
+        
+        deleted_hashes = hashes_a - hashes_b
+        added_hashes = hashes_b - hashes_a
+        common_hashes = hashes_a & hashes_b
+        
+        # 差分DXFファイル生成
+        success = output_generator.create_diff_dxf(
+            entities_a, entities_b, deleted_hashes, added_hashes, common_hashes, output_file)
+        
+        return success
+        
     except Exception as e:
-        print(f"エラーが発生しました: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"DXF comparison error: {e}")
         return False
-
-# get_entity_key 関数に y_offset 引数を追加
-def get_entity_key(entity, tolerance=1e-6, y_offset=0.0): # y_offset引数を追加
-    entity_type = entity.dxftype()
-    layer = entity.dxf.layer
-    linetype = entity.dxf.linetype # 既存のコードに合わせてlinetypeもキーに含める
-
-    if entity_type == 'LINE':
-        start_x = entity.dxf.start[0]
-        start_y = entity.dxf.start[1] - y_offset # Yオフセット適用
-        end_x = entity.dxf.end[0]
-        end_y = entity.dxf.end[1] - y_offset   # Yオフセット適用
-        return f"LINE_{round_float(start_x, tolerance)}_{round_float(start_y, tolerance)}_{round_float(end_x, tolerance)}_{round_float(end_y, tolerance)}_{layer}_{linetype}"
-    elif entity_type == 'CIRCLE':
-        center_x = entity.dxf.center[0]
-        center_y = entity.dxf.center[1] - y_offset # Yオフセット適用
-        radius = entity.dxf.radius
-        # layer, linetype もキーに含めるとより厳密になる
-        return f"CIRCLE_{round_float(center_x, tolerance)}_{round_float(center_y, tolerance)}_{round_float(radius, tolerance)}_{layer}_{linetype}"
-    elif entity_type == 'ARC':
-        center_x = entity.dxf.center[0]
-        center_y = entity.dxf.center[1] - y_offset # Yオフセット適用
-        radius = entity.dxf.radius
-        start_angle = entity.dxf.start_angle
-        end_angle = entity.dxf.end_angle
-        return f"ARC_{round_float(center_x, tolerance)}_{round_float(center_y, tolerance)}_{round_float(radius, tolerance)}_{round_float(start_angle, tolerance)}_{round_float(end_angle, tolerance)}_{layer}_{linetype}"
-    elif entity_type == 'TEXT':
-        insert_x = entity.dxf.insert[0]
-        insert_y = entity.dxf.insert[1] - y_offset # Yオフセット適用
-        text_val = entity.dxf.text
-        # 高さや回転などもキーに含めることを検討
-        height = entity.dxf.height
-        rotation = entity.dxf.get('rotation', 0.0)
-        return f"TEXT_{round_float(insert_x, tolerance)}_{round_float(insert_y, tolerance)}_{text_val}_{round_float(height, tolerance)}_{round_float(rotation, tolerance)}_{layer}_{linetype}"
-    elif entity_type == 'MTEXT':
-        insert_x = entity.dxf.insert[0]
-        insert_y = entity.dxf.insert[1] - y_offset # Yオフセット適用
-        text_val = entity.text # MTEXTの場合は .text から取得
-        char_height = entity.dxf.char_height
-        rotation = entity.dxf.get('rotation', 0.0)
-        return f"MTEXT_{round_float(insert_x, tolerance)}_{round_float(insert_y, tolerance)}_{text_val}_{round_float(char_height, tolerance)}_{round_float(rotation, tolerance)}_{layer}_{linetype}"
-    elif entity_type == 'LEADER': # LEADERは元のコードを参照
-        return f"LEADER_{layer}_{linetype}"
-    # POINTエンティティなど、他のエンティティタイプも必要に応じてYオフセットを適用
-    elif entity_type == 'POINT':
-        loc_x = entity.dxf.location[0]
-        loc_y = entity.dxf.location[1] - y_offset # Yオフセット適用
-        return f"POINT_{round_float(loc_x, tolerance)}_{round_float(loc_y, tolerance)}_{layer}_{linetype}"
-    elif entity_type == 'INSERT': # INSERTエンティティもYオフセットを適用
-        insert_x = entity.dxf.insert[0]
-        insert_y = entity.dxf.insert[1] - y_offset # Yオフセット適用
-        block_name = entity.dxf.name
-        xscale = entity.dxf.get('xscale', 1.0)
-        yscale = entity.dxf.get('yscale', 1.0)
-        rotation = entity.dxf.get('rotation', 0.0)
-        return f"INSERT_{block_name}_{round_float(insert_x, tolerance)}_{round_float(insert_y, tolerance)}_{round_float(xscale,tolerance)}_{round_float(yscale,tolerance)}_{round_float(rotation,tolerance)}_{layer}"
-    else:
-        # その他のエンティティタイプの場合は、元のキー生成ロジックをベースに
-        # Y座標を含む可能性のある属性があればオフセットを適用
-        return f"{entity_type}_{layer}_{linetype}"
-
-# is_entity_modified 関数に y_offset_for_b 引数を追加
-def is_entity_modified(entity_a, entity_b, tolerance=1e-6, y_offset_for_b=0.0): # y_offset_for_b引数を追加
-    if entity_a.dxftype() != entity_b.dxftype():
-        return True
-
-    entity_type = entity_a.dxftype()
-    # 各エンティティタイプに応じて、Y座標比較時にオフセットを考慮
-    if entity_type == 'LINE':
-        if not math.isclose(entity_a.dxf.start[0], entity_b.dxf.start[0], rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.start[1], entity_b.dxf.start[1] - y_offset_for_b, rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.end[0], entity_b.dxf.end[0], rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.end[1], entity_b.dxf.end[1] - y_offset_for_b, rel_tol=tolerance, abs_tol=tolerance):
-            return True
-    elif entity_type == 'CIRCLE':
-        if not math.isclose(entity_a.dxf.center[0], entity_b.dxf.center[0], rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.center[1], entity_b.dxf.center[1] - y_offset_for_b, rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.radius, entity_b.dxf.radius, rel_tol=tolerance, abs_tol=tolerance):
-            return True
-    elif entity_type == 'ARC':
-        if not math.isclose(entity_a.dxf.center[0], entity_b.dxf.center[0], rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.center[1], entity_b.dxf.center[1] - y_offset_for_b, rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.radius, entity_b.dxf.radius, rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.start_angle, entity_b.dxf.start_angle, rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.end_angle, entity_b.dxf.end_angle, rel_tol=tolerance, abs_tol=tolerance):
-            return True
-    elif entity_type == 'TEXT':
-        # テキスト内容、高さ、回転なども比較
-        if not math.isclose(entity_a.dxf.insert[0], entity_b.dxf.insert[0], rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.insert[1], entity_b.dxf.insert[1] - y_offset_for_b, rel_tol=tolerance, abs_tol=tolerance) or \
-           entity_a.dxf.text != entity_b.dxf.text or \
-           not math.isclose(entity_a.dxf.height, entity_b.dxf.height, rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.get('rotation', 0.0), entity_b.dxf.get('rotation', 0.0), rel_tol=tolerance, abs_tol=tolerance):
-            return True
-    elif entity_type == 'MTEXT':
-        # テキスト内容、文字高さ、幅なども比較
-        if not math.isclose(entity_a.dxf.insert[0], entity_b.dxf.insert[0], rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.insert[1], entity_b.dxf.insert[1] - y_offset_for_b, rel_tol=tolerance, abs_tol=tolerance) or \
-           entity_a.text != entity_b.text or \
-           not math.isclose(entity_a.dxf.char_height, entity_b.dxf.char_height, rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.get('width', 0.0), entity_b.dxf.get('width', 0.0), rel_tol=tolerance, abs_tol=tolerance): # widthはオプション
-            return True
-    elif entity_type == 'POINT': # POINTエンティティの比較
-        if not math.isclose(entity_a.dxf.location[0], entity_b.dxf.location[0], rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.location[1], entity_b.dxf.location[1] - y_offset_for_b, rel_tol=tolerance, abs_tol=tolerance):
-            return True
-    elif entity_type == 'INSERT':
-        if entity_a.dxf.name != entity_b.dxf.name or \
-           not math.isclose(entity_a.dxf.insert[0], entity_b.dxf.insert[0], rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.insert[1], entity_b.dxf.insert[1] - y_offset_for_b, rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.get('xscale',1.0), entity_b.dxf.get('xscale',1.0), rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.get('yscale',1.0), entity_b.dxf.get('yscale',1.0), rel_tol=tolerance, abs_tol=tolerance) or \
-           not math.isclose(entity_a.dxf.get('rotation',0.0), entity_b.dxf.get('rotation',0.0), rel_tol=tolerance, abs_tol=tolerance):
-            return True
-    # 他の共通属性の比較 (レイヤー、線種など。キーに含まれていれば冗長かもしれないが、より確実)
-    if entity_a.dxf.layer != entity_b.dxf.layer or \
-       entity_a.dxf.linetype != entity_b.dxf.linetype or \
-       entity_a.dxf.color != entity_b.dxf.color: # 色も比較
-        return True
-    # XDATAなどのより詳細な比較はここに追加できます
-    return False
-
-# round_float 関数 (変更なし)
-def round_float(value, tolerance=1e-6):
-    if not isinstance(value, (int, float)): # 数値でない場合はそのまま返す (稀なケースだが念のため)
-        return value
-    return round(value / tolerance) * tolerance
-
-# copy_entity_to_result 関数 (変更なし、XDATAコピーはコメントアウトまたはAPI確認を推奨)
-def copy_entity_to_result(entity, msp_result, layer_name):
-    # この関数は元のエンティティの属性（オフセット適用前の座標）でコピーします
-    dxfattribs = entity.dxf.all_existing_dxf_attribs()
-    dxfattribs['layer'] = layer_name
-    if 'handle' in dxfattribs: del dxfattribs['handle']
-    if 'owner' in dxfattribs: del dxfattribs['owner']
-    if 'reactors' in dxfattribs: del dxfattribs['reactors'] # reactorsもコピーしない
-
-    new_entity = None
-    entity_type = entity.dxftype()
-
-    if entity_type == 'LINE':
-        new_entity = msp_result.add_line(
-            start=entity.dxf.start, # 元の座標
-            end=entity.dxf.end,     # 元の座標
-            dxfattribs=dxfattribs
-        )
-    elif entity_type == 'POINT':
-        if 'insert' in dxfattribs: del dxfattribs['insert']
-        location = dxfattribs.pop('location', entity.dxf.location)
-        new_entity = msp_result.add_point(location=location, dxfattribs=dxfattribs)
-    elif entity_type == 'CIRCLE':
-        new_entity = msp_result.add_circle(
-            center=entity.dxf.center, # 元の座標
-            radius=entity.dxf.radius,
-            dxfattribs=dxfattribs
-        )
-    elif entity_type == 'ARC':
-        new_entity = msp_result.add_arc(
-            center=entity.dxf.center, # 元の座標
-            radius=entity.dxf.radius,
-            start_angle=entity.dxf.start_angle,
-            end_angle=entity.dxf.end_angle,
-            dxfattribs=dxfattribs
-        )
-    elif entity_type == 'TEXT':
-        text_content = dxfattribs.pop('text', entity.dxf.text)
-        insert_coord = dxfattribs.pop('insert', entity.dxf.insert)
-        height = dxfattribs.pop('height', entity.dxf.height)
-        current_attribs = {'insert': insert_coord, 'height': height}
-        current_attribs.update(dxfattribs)
-        new_entity = msp_result.add_text(text=text_content, dxfattribs=current_attribs)
-    elif entity_type == 'MTEXT':
-        mtext_content = entity.text
-        insert_coord = dxfattribs.pop('insert', entity.dxf.insert)
-        char_height = dxfattribs.pop('char_height', entity.dxf.char_height)
-        current_attribs = {'insert': insert_coord, 'char_height': char_height}
-        current_attribs.update(dxfattribs)
-        new_entity = msp_result.add_mtext(text=mtext_content, dxfattribs=current_attribs)
-    elif entity_type == 'INSERT':
-        block_name = dxfattribs.pop('name', entity.dxf.name)
-        insert_coord = dxfattribs.pop('insert', entity.dxf.insert) # 元の座標
-        current_attribs = {'insert': insert_coord} # add_blockref のdxfattribsはinsertを含んでも良いが、引数で明示的に渡す方が安全
-        current_attribs.update(dxfattribs)
-        new_entity = msp_result.add_blockref(name=block_name, insert=insert_coord, dxfattribs=current_attribs)
-    elif entity_type == 'LEADER': # 元の簡易コピー
-        try:
-            # LEADERの位置情報を取得しようと試みる (より良い方法があれば修正)
-            leader_pos = entity.dxf.get('vertices', [(0,0,0)])[0] if hasattr(entity.dxf, 'vertices') and entity.dxf.vertices else \
-                         entity.dxf.get('annotation_location', (0,0,0)) if hasattr(entity.dxf, 'annotation_location') else (0,0,0)
-
-            msp_result.add_text(
-                text=f"[LEADER]",
-                dxfattribs={'layer': layer_name, 'insert': leader_pos, 'height': 2.5}
-            )
-        except Exception:
-             msp_result.add_text(
-                text=f"[LEADER_COPY_ERR]",
-                dxfattribs={'layer': layer_name, 'insert': (0,0,0), 'height': 2.5}
-            )
-    else:
-        # 汎用的なコピー（位置情報があれば利用）
-        insert_pos = entity.dxf.get('insert', None)
-        if insert_pos is None:
-            if hasattr(entity.dxf, 'location'): insert_pos = entity.dxf.location
-            elif hasattr(entity.dxf, 'center'): insert_pos = entity.dxf.center
-            elif hasattr(entity.dxf, 'start'): insert_pos = entity.dxf.start
-            else: insert_pos = (0,0,0)
-
-        msp_result.add_text(
-            text=f"[{entity_type} on {layer_name}]",
-            dxfattribs={'layer': layer_name, 'insert': insert_pos, 'height': 2.5, 'color': dxfattribs.get('color', 256)}
-        )
-
-    # XDATAのコピー (APIの確認が必要なため、慎重に扱うか一時的にコメントアウト)
-    # if new_entity and hasattr(entity, 'xdata') and entity.xdata is not None:
-    #     try:
-    #         # ezdxf 1.4.1 の XData の正しい扱い方を要確認
-    #         # for appid, tags_list in entity.xdata.items(): # items() が使えるか？
-    #         #    new_entity.set_xdata(appid, tags_list)
-    #         print(f"Info: XDATA found for entity {entity.dxf.handle if entity.dxf.handle else 'N/A'}, copy logic needs verification for ezdxf 1.4.1.")
-    #     except Exception as xdata_e:
-    #         print(f"Warning: Failed to copy XDATA for entity {entity.dxf.handle if entity.dxf.handle else 'N/A'}: {xdata_e}")
