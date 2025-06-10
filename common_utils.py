@@ -99,7 +99,7 @@ def handle_error(e, show_traceback=True):
 
 
 # ========================================
-# 回路記号処理関連の共通機能
+# 機器符号処理関連の共通機能
 # ========================================
 
 # ref_designator_format.txt の内容を埋め込み
@@ -166,7 +166,7 @@ def convert_format_to_regex(format_str):
 
 def compile_ref_designator_patterns():
     """
-    参考指示子フォーマットのパターンリストをコンパイルする
+    機器符号フォーマットのパターンリストをコンパイルする
     
     Returns:
         list: コンパイル済み正規表現オブジェクトのリスト
@@ -201,7 +201,7 @@ def validate_ref_designator(label, patterns):
 
 def filter_non_circuit_symbols(labels, debug=False):
     """
-    回路記号以外と判断されるラベルをフィルタリングする
+    機器符号以外と判断されるラベルをフィルタリングする
     
     Args:
         labels: ラベルのリスト
@@ -294,13 +294,13 @@ def filter_non_circuit_symbols(labels, debug=False):
 
 def validate_circuit_symbols(labels):
     """
-    回路記号の妥当性をチェックし、適合しないものを返す
+    機器符号の妥当性をチェックし、適合しないものを返す
     
     Args:
         labels: チェック対象のラベルリスト
         
     Returns:
-        list: 適合しない回路記号のリスト（ユニーク、アルファベット順）
+        list: 適合しない機器符号のリスト（ユニーク、アルファベット順）
     """
     patterns = compile_ref_designator_patterns()
     invalid_designators = []
@@ -314,19 +314,19 @@ def validate_circuit_symbols(labels):
 
 def process_circuit_symbol_labels(labels, filter_non_parts=False, validate_ref_designators=False, debug=False):
     """
-    ラベルに対して回路記号処理を統合的に実行する
+    ラベルに対して機器符号処理を統合的に実行する
     
     Args:
         labels: 処理対象のラベルリスト
-        filter_non_parts: 回路記号以外のラベルをフィルタリングするかどうか
-        validate_ref_designators: 回路記号の妥当性をチェックするかどうか
+        filter_non_parts: 機器符号以外のラベルをフィルタリングするかどうか
+        validate_ref_designators: 機器符号の妥当性をチェックするかどうか
         debug: デバッグ情報を表示するかどうか
         
     Returns:
         dict: 処理結果を含む辞書
             - 'labels': 処理後のラベルリスト
             - 'filtered_count': フィルタリングで除外されたラベル数
-            - 'invalid_ref_designators': 適合しない回路記号のリスト（妥当性チェック有効時のみ）
+            - 'invalid_ref_designators': 適合しない機器符号のリスト（妥当性チェック有効時のみ）
     """
     result = {
         'labels': labels.copy(),
@@ -340,7 +340,7 @@ def process_circuit_symbol_labels(labels, filter_non_parts=False, validate_ref_d
         result['labels'] = filtered_labels
         result['filtered_count'] = filtered_count
     
-    # 回路記号妥当性チェック（フィルタリング後のラベルに対して実行）
+    # 機器符号妥当性チェック（フィルタリング後のラベルに対して実行）
     if validate_ref_designators and filter_non_parts:
         invalid_designators = validate_circuit_symbols(result['labels'])
         result['invalid_ref_designators'] = invalid_designators

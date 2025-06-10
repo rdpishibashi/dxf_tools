@@ -19,9 +19,9 @@ def app():
         
         with col1:
             filter_option = st.checkbox(
-                "回路記号（候補）のみ抽出", 
+                "機器符号（候補）のみ抽出", 
                 value=False, 
-                help="以下の条件に合致するラベルは回路記号でないと判断して除外します："
+                help="以下の条件に合致するラベルは機器符号でないと判断して除外します："
                      "\n- 最初の文字が「(」（例：(BK), (M5)）"
                      "\n- 最初の文字が数字（例：2.1+, 500DJ）"
                      "\n- 英大文字だけで2文字以下（E, L, PE）"
@@ -36,14 +36,14 @@ def app():
                      "\n- ラベルの文字列中の「(」ではじまり「)」で閉じる文字列部分を削除"
             )
             
-            # 回路記号妥当性チェックオプション（回路記号フィルタリングが有効な場合のみ表示）
+            # 機器符号妥当性チェックオプション（機器符号フィルタリングが有効な場合のみ表示）
             validate_ref_designators = False
             if filter_option:
                 validate_ref_designators = st.checkbox(
-                    "回路記号妥当性チェック", 
+                    "機器符号妥当性チェック", 
                     value=False,
-                    help="抽出された回路記号が参考指示子フォーマットに適合するかチェックします。"
-                         "\n適合しない回路記号のリストを別シートに出力します。"
+                    help="抽出された機器符号がフォーマットに適合するかチェックします。"
+                         "\n適合しない機器符号のリストを別シートに出力します。"
                          "\n（例：CBnnn, ELB(CB) nnn, R, Annn等の標準フォーマット）"
                 )
         
@@ -140,13 +140,13 @@ def app():
         "- 各シートでは、ファイルAのみ、ファイルBのみ、両方に存在するが数が異なるラベルを色分けして表示"
     ]
     
-    # 回路記号妥当性チェックが有効な場合の追加説明
+    # 機器符号妥当性チェックが有効な場合の追加説明
     if filter_option and validate_ref_designators:
         help_text.extend([
             "",
-            "**回路記号妥当性チェック：**",
-            "- 適合しない回路記号を各ペアの「_Invalid」シートに出力",
-            "- サマリーシートに適合しない回路記号の数を表示",
+            "**機器符号妥当性チェック：**",
+            "- 適合しない機器符号を各ペアの「_Invalid」シートに出力",
+            "- サマリーシートに適合しない機器符号の数を表示",
             "- 標準フォーマット（CBnnn, ELB(CB) nnn, R, Annn等）との適合性をチェック"
         ])
     
@@ -179,11 +179,11 @@ def app():
                     # 処理オプションの情報を追加
                     option_info = []
                     if filter_option:
-                        option_info.append("回路記号フィルタリング: 有効")
+                        option_info.append("機器符号フィルタリング: 有効")
                         if validate_ref_designators:
-                            option_info.append("回路記号妥当性チェック: 有効")
+                            option_info.append("機器符号妥当性チェック: 有効")
                     else:
-                        option_info.append("回路記号フィルタリング: 無効")
+                        option_info.append("機器符号フィルタリング: 無効")
                     
                     if sort_value != "none":
                         sort_text = "昇順" if sort_value == "asc" else "逆順"
