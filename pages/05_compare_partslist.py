@@ -10,8 +10,8 @@ from utils.compare_partslist import compare_parts_list_multi
 from common_utils import save_uploadedfile, get_comparison_filename, handle_error
 
 def app():
-    st.title('回路記号リスト差分抽出')
-    st.write('複数の回路記号リストペアを比較し、差分をExcel形式で出力します。')
+    st.title('機器符号リスト差分抽出')
+    st.write('複数の機器符号リストのペアを比較し、差分をExcel形式で出力します。')
     
     # オプション設定
     with st.expander("オプション設定", expanded=True):
@@ -21,8 +21,8 @@ def app():
             output_filename += '.xlsx'
     
     # ファイルペア登録UI
-    st.subheader("ファイルペア登録")
-    st.write("最大5ペアの回路記号リストファイルを登録できます")
+    st.subheader("ファイル・ペアの登録")
+    st.write("最大5ペアの機器符号リストファイルを登録できます")
     
     # セッション状態の初期化
     if 'file_pairs' not in st.session_state:
@@ -38,12 +38,12 @@ def app():
     file_pairs_valid = []
     
     for i in range(5):  # 最大5ペア
-        with st.expander(f"ファイルペア {i+1}", expanded=i==0):
+        with st.expander(f"ファイル・ペア {i+1}", expanded=i==0):
             col1, col2, col3 = st.columns([2, 2, 1])
             
             with col1:
                 uploaded_file_a = st.file_uploader(
-                    f"回路記号リスト・ファイルA {i+1}", 
+                    f"機器符号リスト・ファイルA {i+1}", 
                     type=["txt", "csv"], 
                     key=f"partslist_a_{i}"
                 )
@@ -52,7 +52,7 @@ def app():
                 
             with col2:
                 uploaded_file_b = st.file_uploader(
-                    f"回路記号リスト・ファイルB {i+1}", 
+                    f"機器符号リスト・ファイルB {i+1}", 
                     type=["txt", "csv"], 
                     key=f"partslist_b_{i}"
                 )
@@ -80,15 +80,15 @@ def app():
     
     # ヘルプ情報を表示
     st.info("""
-    このツールは、複数の回路記号リストファイルペアを比較し、各ペアごとに比較結果をExcelファイルに出力します。
+    このツールは、複数の機器符号リストのファイル・ペアを比較し、各ペアごとに比較結果をExcelファイルに出力します。
     
-    1. 各ファイルペアを登録してください（最大5ペア）
+    1. 各ファイル・ペアを登録してください（最大5ペア）
     2. 「出力Excelファイル名」を設定します
-    3. 「回路記号リストを比較」ボタンをクリックして処理を実行します
+    3. 「機器符号リストを比較」ボタンをクリックして処理を実行します
     
     入力ファイルは以下の形式に対応しています：
-    - 1行に1つの回路記号が記載されたテキストファイル
-    - CSVフォーマットの場合、1行目が回路記号、2列目がメーカー名、3列目が製品名として処理されます
+    - 1行に1つの機器符号が記載されたテキストファイル
+    - CSVフォーマットの場合、1行目が機器符号、2列目がメーカー名、3列目が製品名として処理されます
     
     Excelファイルは以下の内容を含みます：
     - 各ペアごとに個別のシートを作成
@@ -99,9 +99,9 @@ def app():
     if file_pairs_valid:
         try:
             # ファイルが選択されたら処理ボタンを表示
-            if st.button("回路記号リストを比較", disabled=len(file_pairs_valid) == 0):
+            if st.button("機器符号リストを比較", disabled=len(file_pairs_valid) == 0):
                 # 全てのファイルを一時ディレクトリに保存
-                with st.spinner('回路記号リストファイルを処理中...'):
+                with st.spinner('機器符号リストファイルを処理中...'):
                     temp_file_pairs = []
                     
                     # ファイルの保存とペア情報の作成
@@ -153,7 +153,7 @@ def app():
                             st.error("Excel出力の生成に失敗しました。データがNoneとして返されました。")
                         else:
                             # 結果を表示
-                            st.success(f"{len(file_pairs_valid)}ペアの回路記号リストの比較が完了しました")
+                            st.success(f"{len(file_pairs_valid)}ペアの機器符号リストの比較が完了しました")
                             
                             # ダウンロードボタンを作成
                             st.download_button(
@@ -179,7 +179,7 @@ def app():
         except Exception as e:
             handle_error(e)
     else:
-        st.warning("少なくとも1つのファイルペア（Aファイル、Bファイル）を登録してください。")
+        st.warning("少なくとも1つのファイル・ペア（Aファイル、Bファイル）を登録してください。")
 
 if __name__ == "__main__":
     app()

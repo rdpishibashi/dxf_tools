@@ -93,8 +93,8 @@ def find_assembly_numbers(excel_path):
         return []
 
 def app():
-    st.title('Excel回路記号抽出')
-    st.write('ULKES Excelファイルから回路記号を抽出します。')
+    st.title('Excel機器符号抽出')
+    st.write('ULKES Excelファイルから機器符号を抽出します。')
     
     # ファイルアップロードUI
     uploaded_file = st.file_uploader("Excelファイルをアップロード", type=["xlsx"], key="circuit_extractor")
@@ -184,14 +184,14 @@ def app():
             if len(selected_assemblies) == 0:
                 st.warning("少なくとも1つの図面番号を選択してください。")
             else:
-                if st.button("回路記号を抽出"):
+                if st.button("機器符号を抽出"):
                     try:
-                        # 選択された図面番号ごとに回路記号を抽出
+                        # 選択された図面番号ごとに機器符号を抽出
                         all_symbols = []
                         total_processed_rows = 0
                         total_symbols = 0
                         
-                        with st.spinner('回路記号を抽出中...'):
+                        with st.spinner('機器符号を抽出中...'):
                             # 処理結果の表示用プログレスバー
                             progress_bar = st.progress(0)
                             
@@ -205,7 +205,7 @@ def app():
                                 status_text = st.empty()
                                 status_text.info(f"処理中: {assembly_number} ({i+1}/{len(selected_assemblies)})")
                                 
-                                # 図面番号を指定して回路記号を抽出
+                                # 図面番号を指定して機器符号を抽出
                                 symbols, info = extract_circuit_symbols(
                                     temp_file,
                                     assembly_number=assembly_number,
@@ -230,10 +230,10 @@ def app():
                         st.success(f"処理完了！ {len(selected_assemblies)} 個の図面番号を処理しました。")
                         st.info(f"処理した図面番号: {', '.join(selected_assemblies)}")
                         st.info(f"対象データ行数: {total_processed_rows}")
-                        st.info(f"抽出された回路記号数: {len(all_symbols)}")
+                        st.info(f"抽出された機器符号数: {len(all_symbols)}")
                         
-                        # 抽出された回路記号の表示
-                        st.text_area("回路記号リスト", "\n".join(all_symbols), height=300)
+                        # 抽出された機器符号の表示
+                        st.text_area("機器符号リスト", "\n".join(all_symbols), height=300)
                         
                         # ダウンロードボタンを作成
                         if all_symbols:

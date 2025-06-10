@@ -17,8 +17,8 @@ st.markdown("""
 1. **図面ラベル抽出** (extract labels) - DXFファイルからラベル（テキスト）を抽出します
 2. **図面差分抽出** (compare dxf) - 2つのDXFファイルを比較し、差分をDXFフォーマットで出力します
 3. **図面ラベル差分抽出** (compare labels) - 2つのDXFファイルのラベルを比較し、差分をExcel形式で出力します
-4. **Excel回路記号抽出** (extract symbols) - ULKES Excelファイルから回路記号を抽出します
-5. **回路記号リスト差分抽出** (compare partslist) - 2つの回路記号リストを比較し、差分をExcel形式で出力します
+4. **Excel機器符号抽出** (extract symbols) - ULKES Excelファイルから機器符号を抽出します
+5. **機器符号リスト差分抽出** (compare partslist) - 2つの機器符号リストを比較し、差分をExcel形式で出力します
 
 左側のサイドバーから利用したい機能を選んでください。
 """)
