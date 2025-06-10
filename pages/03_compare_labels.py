@@ -21,8 +21,31 @@ def app():
             filter_option = st.checkbox(
                 "回路記号（候補）のみ抽出", 
                 value=False, 
-                help="回路記号以外と判断されるラベルを除外します"
+                help="以下の条件に合致するラベルは回路記号でないと判断して除外します："
+                     "\n- 最初の文字が「(」（例：(BK), (M5)）"
+                     "\n- 最初の文字が数字（例：2.1+, 500DJ）"
+                     "\n- 英大文字だけで2文字以下（E, L, PE）"
+                     "\n- 英大文字１文字に続いて数字（例：R1, T2）"
+                     "\n- 英大文字１文字に続いて数字と「.」からなる文字列（例：L1.1, P01）"
+                     "\n- 英字と「+」もしくは「-」の組み合わせ（例：P+, VCC-）"
+                     "\n- 「GND」を含む（例：GND, GND(M4)）"
+                     "\n- 「AWG」ではじまるラベル（例：AWG14, AWG18）"
+                     "\n- 英単語（＋数字）と空白からなるラベル（例：on ..., CB BOX FX3）"
+                     "\n- 「☆」ではじまるラベル"
+                     "\n- 「注」ではじまるラベル"
+                     "\n- ラベルの文字列中の「(」ではじまり「)」で閉じる文字列部分を削除"
             )
+            
+            # 回路記号妥当性チェックオプション（回路記号フィルタリングが有効な場合のみ表示）
+            validate_ref_designators = False
+            if filter_option:
+                validate_ref_designators = st.checkbox(
+                    "回路記号妥当性チェック", 
+                    value=False,
+                    help="抽出された回路記号が参考指示子フォーマットに適合するかチェックします。"
+                         "\n適合しない回路記号のリストを別シートに出力します。"
+                         "\n（例：CBnnn, ELB(CB) nnn, R, Annn等の標準フォーマット）"
+                )
         
         with col2:
             sort_option = st.selectbox(
@@ -102,18 +125,32 @@ def app():
                 st.success(f"Pair{i+1}: {st.session_state.file_pairs[i]['fileA'].name} と {st.session_state.file_pairs[i]['fileB'].name} を比較")
     
     # ヘルプ情報を表示
-    st.info("""
-    このツールは、複数のDXFファイルペアからテキスト要素（ラベル）を抽出し、各ペアごとに比較結果をExcelファイルに出力します。
+    help_text = [
+        "このツールは、複数のDXFファイルペアからテキスト要素（ラベル）を抽出し、各ペアごとに比較結果をExcelファイルに出力します。",
+        "",
+        "**使用手順：**",
+        "1. 各ファイルペアを登録してください（最大5ペア）",
+        "2. 「出力Excelファイル名」を設定します",
+        "3. 必要に応じてオプションを設定します",
+        "4. 「ラベル差分を比較」ボタンをクリックして処理を実行します",
+        "",
+        "**Excelファイルの内容：**",
+        "- 各ペアごとに個別のシートを作成",
+        "- サマリーシートで全体の比較結果を表示",
+        "- 各シートでは、ファイルAのみ、ファイルBのみ、両方に存在するが数が異なるラベルを色分けして表示"
+    ]
     
-    1. 各ファイルペアを登録してください（最大5ペア）
-    2. 「出力Excelファイル名」を設定します
-    3. 「ラベル差分を比較」ボタンをクリックして処理を実行します
+    # 回路記号妥当性チェックが有効な場合の追加説明
+    if filter_option and validate_ref_designators:
+        help_text.extend([
+            "",
+            "**回路記号妥当性チェック：**",
+            "- 適合しない回路記号を各ペアの「_Invalid」シートに出力",
+            "- サマリーシートに適合しない回路記号の数を表示",
+            "- 標準フォーマット（CBnnn, ELB(CB) nnn, R, Annn等）との適合性をチェック"
+        ])
     
-    Excelファイルは以下の内容を含みます：
-    - 各ペアごとに個別のシートを作成
-    - サマリーシートで全体の比較結果を表示
-    - 各シートでは、ファイルAのみ、ファイルBのみ、両方に存在するが数が異なるラベルを色分けして表示
-    """)
+    st.info("\n".join(help_text))
     
     if file_pairs_valid:
         try:
@@ -132,15 +169,38 @@ def app():
                     excel_data = compare_labels_multi(
                         temp_file_pairs,
                         filter_non_parts=filter_option,
-                        sort_order=sort_value
+                        sort_order=sort_value,
+                        validate_ref_designators=validate_ref_designators
                     )
                     
                     # 結果を表示
-                    st.success(f"{len(file_pairs_valid)}ペアのDXFファイルの比較が完了しました")
+                    success_message = f"{len(file_pairs_valid)}ペアのDXFファイルの比較が完了しました"
+                    
+                    # 処理オプションの情報を追加
+                    option_info = []
+                    if filter_option:
+                        option_info.append("回路記号フィルタリング: 有効")
+                        if validate_ref_designators:
+                            option_info.append("回路記号妥当性チェック: 有効")
+                    else:
+                        option_info.append("回路記号フィルタリング: 無効")
+                    
+                    if sort_value != "none":
+                        sort_text = "昇順" if sort_value == "asc" else "逆順"
+                        option_info.append(f"並び替え: {sort_text}")
+                    
+                    if option_info:
+                        success_message += f"\n（{', '.join(option_info)}）"
+                    
+                    st.success(success_message)
                     
                     # ダウンロードボタンを作成
+                    download_label = "Excel比較結果をダウンロード"
+                    if validate_ref_designators and filter_option:
+                        download_label += " (妥当性チェック結果含む)"
+                    
                     st.download_button(
-                        label="Excel比較結果をダウンロード",
+                        label=download_label,
                         data=excel_data,
                         file_name=output_filename,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -46,6 +46,17 @@ def app():
                  "\n- 「注」ではじまるラベル"
                  "\n- ラベルの文字列中の「(」ではじまり「)」で閉じる文字列部分を削除"
         )
+        
+        # 回路記号妥当性チェックオプション（回路記号フィルタリングが有効な場合のみ表示）
+        validate_ref_designators = False
+        if filter_option:
+            validate_ref_designators = st.checkbox(
+                "回路記号妥当性チェック", 
+                value=False,
+                help="抽出された回路記号がフォーマットに適合するかチェックします。"
+                     "\n適合しない回路記号のリストを別途表示します。"
+                     "\n（例：CBnnn, ELB(CB) nnn, R, Annn等の標準フォーマット）"
+            )
     
     with col2:
         sort_option = st.selectbox(
@@ -272,7 +283,8 @@ def app():
                                 filter_non_parts=filter_option, 
                                 sort_order=sort_value, 
                                 debug=debug_option,  # デバッグオプションはfalseに固定
-                                selected_layers=selected_layers
+                                selected_layers=selected_layers,
+                                validate_ref_designators=validate_ref_designators
                             )
                             
                             results[file_name] = (labels, info)
@@ -290,11 +302,17 @@ def app():
                             output_files = {}
                             
                             # すべてのファイルの結果をZIPアーカイブ用に準備
-                            for file_name, (file_labels, _) in results.items():
+                            for file_name, (file_labels, file_info) in results.items():
                                 if file_labels:
                                     # 個別ファイルのファイル名も同じヘルパー関数で生成
                                     file_output_name = get_output_filename(file_name, 'labels')
                                     output_files[file_output_name] = "\n".join(file_labels).encode('utf-8')
+                                
+                                # 妥当性チェック結果がある場合、それも追加
+                                if validate_ref_designators and 'invalid_ref_designators' in file_info and file_info['invalid_ref_designators']:
+                                    invalid_filename = get_output_filename(file_name, 'labels', 'invalid.txt')
+                                    invalid_content = "\n".join(file_info['invalid_ref_designators'])
+                                    output_files[invalid_filename] = invalid_content.encode('utf-8')
                             
                             # ZIPアーカイブのダウンロードボタン
                             if output_files:
@@ -369,6 +387,32 @@ def app():
                             if process_button and sort_value != "none":
                                 sort_text = "昇順" if sort_value == "asc" else "逆順"
                                 st.info(f"ラベルを{sort_text}で並び替えました")
+                            
+                            # 回路記号妥当性チェック結果の表示
+                            if validate_ref_designators and 'invalid_ref_designators' in info:
+                                invalid_designators = info['invalid_ref_designators']
+                                if invalid_designators:
+                                    st.warning(f"フォーマットに適合しない回路記号が {len(invalid_designators)} 個見つかりました")
+                                    
+                                    # 適合しない回路記号を表示
+                                    st.text_area(
+                                        f"適合しない回路記号 - {selected_file}", 
+                                        "\n".join(invalid_designators), 
+                                        height=150
+                                    )
+                                    
+                                    # 適合しない回路記号のダウンロードボタン
+                                    invalid_filename = get_output_filename(selected_file, 'labels', 'invalid.txt')
+                                    invalid_content = "\n".join(invalid_designators)
+                                    st.download_button(
+                                        label=f"適合しない回路記号をダウンロード",
+                                        data=invalid_content.encode('utf-8'),
+                                        file_name=invalid_filename,
+                                        mime="text/plain",
+                                        key=f"download_invalid_{hash(selected_file)}"
+                                    )
+                                else:
+                                    st.success("すべての回路記号がフォーマットに適合しています")
                             
                             # ラベル一覧
                             st.text_area(f"ラベル一覧 - {selected_file}", "\n".join(labels), height=300)

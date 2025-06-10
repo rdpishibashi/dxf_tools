@@ -2,9 +2,19 @@ import pandas as pd
 import io
 from collections import Counter
 import os
+import sys
+
+# 共通ユーティリティをインポート
+try:
+    from common_utils import process_circuit_symbol_labels
+except ImportError:
+    # common_utils.pyが見つからない場合のフォールバック
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from common_utils import process_circuit_symbol_labels
+
 from utils.extract_labels import extract_labels
 
-def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
+def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc", validate_ref_designators=False):
     """
     複数のDXFファイルペアのラベル比較結果をExcelとして出力する
     
@@ -15,6 +25,7 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
           - pair_name: ペア名
         filter_non_parts: 回路記号（候補）のみを抽出するかどうか
         sort_order: ソート順（"asc"=昇順, "desc"=降順, "none"=ソートなし）
+        validate_ref_designators: 回路記号の妥当性をチェックするかどうか
         
     Returns:
         bytes: 生成されたExcelファイルのバイナリデータ
@@ -26,8 +37,18 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
     # 各ペアを処理
     for idx, (file_a, file_b, temp_file_a, temp_file_b, pair_name) in enumerate(file_pairs):
         # ラベルを抽出（extract_labelsを再利用）- 一時ファイルパスを使用
-        labels_a, info_a = extract_labels(temp_file_a, filter_non_parts=filter_non_parts, sort_order=sort_order)
-        labels_b, info_b = extract_labels(temp_file_b, filter_non_parts=filter_non_parts, sort_order=sort_order)
+        labels_a, info_a = extract_labels(
+            temp_file_a, 
+            filter_non_parts=filter_non_parts, 
+            sort_order=sort_order,
+            validate_ref_designators=validate_ref_designators
+        )
+        labels_b, info_b = extract_labels(
+            temp_file_b, 
+            filter_non_parts=filter_non_parts, 
+            sort_order=sort_order,
+            validate_ref_designators=validate_ref_designators
+        )
         
         # ラベルの出現回数をカウント
         counter_a = Counter(labels_a)
@@ -123,6 +144,35 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
         # ヘッダー行を固定
         worksheet.freeze_panes(1, 0)
         
+        # 回路記号妥当性チェック結果がある場合、別シートに追加
+        if validate_ref_designators and filter_non_parts:
+            invalid_a = info_a.get('invalid_ref_designators', [])
+            invalid_b = info_b.get('invalid_ref_designators', [])
+            
+            if invalid_a or invalid_b:
+                # 妥当性チェック結果シート名
+                validation_sheet_name = f"{sheet_name}_Invalid"[:31]
+                
+                # 適合しない回路記号をまとめる
+                max_len = max(len(invalid_a), len(invalid_b))
+                invalid_a_padded = invalid_a + [''] * (max_len - len(invalid_a))
+                invalid_b_padded = invalid_b + [''] * (max_len - len(invalid_b))
+                
+                validation_df = pd.DataFrame({
+                    f'Invalid in {file_a_base}': invalid_a_padded,
+                    f'Invalid in {file_b_base}': invalid_b_padded
+                })
+                
+                validation_df.to_excel(writer, sheet_name=validation_sheet_name, index=False)
+                
+                # 妥当性チェック結果シートのフォーマット
+                validation_worksheet = writer.sheets[validation_sheet_name]
+                validation_worksheet.set_column('A:B', 30)
+                
+                # ヘッダー行の書式を設定
+                for col_num, value in enumerate(validation_df.columns.values):
+                    validation_worksheet.write(0, col_num, value, format_header)
+        
         # サマリー情報をシートの上部に追加
         summary_data = [
             [f"ファイルA: {file_a_name}", f"ラベル総数: {len(labels_a)}", f"ユニークラベル数: {len(counter_a)}"],
@@ -133,6 +183,13 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
              f"Bのみのラベル: {sum(1 for s in df['Status'] if s == 'B Only')}", 
              f"異なる個数のラベル: {sum(1 for s in df['Status'] if s == 'Different')}"]
         ]
+        
+        # 回路記号妥当性チェックの情報を追加
+        if validate_ref_designators and filter_non_parts:
+            invalid_a_count = len(info_a.get('invalid_ref_designators', []))
+            invalid_b_count = len(info_b.get('invalid_ref_designators', []))
+            summary_data.append([f"適合しない回路記号 A: {invalid_a_count}", 
+                                f"適合しない回路記号 B: {invalid_b_count}", ""])
         
         # サマリーシートを追加
         if idx == 0:
@@ -164,6 +221,11 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
             summary_sheet.write(summary_row, 6, "異なる個数", pair_header_format)
             summary_sheet.write(summary_row, 7, "ラベル総数", pair_header_format)
             
+            # 妥当性チェックが有効な場合は追加の列
+            if validate_ref_designators and filter_non_parts:
+                summary_sheet.write(summary_row, 8, "適合しないA", pair_header_format)
+                summary_sheet.write(summary_row, 9, "適合しないB", pair_header_format)
+            
             summary_row += 1
             
         # サマリーシートにこのペアの情報を追加
@@ -176,6 +238,13 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc"):
         summary_sheet.write(idx+3, 5, sum(1 for s in df['Status'] if s == 'B Only'))
         summary_sheet.write(idx+3, 6, sum(1 for s in df['Status'] if s == 'Different'))
         summary_sheet.write(idx+3, 7, len(all_labels))
+        
+        # 妥当性チェック結果をサマリーに追加
+        if validate_ref_designators and filter_non_parts:
+            invalid_a_count = len(info_a.get('invalid_ref_designators', []))
+            invalid_b_count = len(info_b.get('invalid_ref_designators', []))
+            summary_sheet.write(idx+3, 8, invalid_a_count)
+            summary_sheet.write(idx+3, 9, invalid_b_count)
     
     # Excelファイルを保存
     writer.close()
