@@ -203,7 +203,7 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc", v
                 'align': 'center',
                 'valign': 'vcenter'
             })
-            summary_sheet.merge_range('A1:D1', 'ラベル差分比較サマリー', title_format)
+            summary_sheet.merge_range('A1:C1', 'ラベル差分比較サマリー', title_format)
             
             # 各ペアの情報を追加
             summary_row = 2
@@ -212,39 +212,37 @@ def compare_labels_multi(file_pairs, filter_non_parts=False, sort_order="asc", v
                 'bg_color': '#4472C4',
                 'font_color': 'white'
             })
-            summary_sheet.write(summary_row, 0, "ペア番号", pair_header_format)
-            summary_sheet.write(summary_row, 1, "シート名", pair_header_format)
-            summary_sheet.write(summary_row, 2, "ファイルA", pair_header_format)
-            summary_sheet.write(summary_row, 3, "ファイルB", pair_header_format)
-            summary_sheet.write(summary_row, 4, "Aのみ", pair_header_format)
-            summary_sheet.write(summary_row, 5, "Bのみ", pair_header_format)
-            summary_sheet.write(summary_row, 6, "異なる個数", pair_header_format)
-            summary_sheet.write(summary_row, 7, "ラベル総数", pair_header_format)
+            summary_sheet.write(summary_row, 0, "シート名", pair_header_format)
+            summary_sheet.write(summary_row, 1, "ファイルA", pair_header_format)
+            summary_sheet.write(summary_row, 2, "ファイルB", pair_header_format)
+            summary_sheet.write(summary_row, 3, "Aのみ", pair_header_format)
+            summary_sheet.write(summary_row, 4, "Bのみ", pair_header_format)
+            summary_sheet.write(summary_row, 5, "異なる個数", pair_header_format)
+            summary_sheet.write(summary_row, 6, "ラベル総数", pair_header_format)
             
             # 妥当性チェックが有効な場合は追加の列
             if validate_ref_designators and filter_non_parts:
-                summary_sheet.write(summary_row, 8, "適合しないA", pair_header_format)
-                summary_sheet.write(summary_row, 9, "適合しないB", pair_header_format)
+                summary_sheet.write(summary_row, 7, "適合しないA", pair_header_format)
+                summary_sheet.write(summary_row, 8, "適合しないB", pair_header_format)
             
             summary_row += 1
             
         # サマリーシートにこのペアの情報を追加
         summary_sheet = writer.sheets["Summary"]
-        summary_sheet.write(idx+3, 0, f"ペア{idx+1}")
-        summary_sheet.write(idx+3, 1, sheet_name)
-        summary_sheet.write(idx+3, 2, file_a_base)  # 元のファイル名を表示
-        summary_sheet.write(idx+3, 3, file_b_base)  # 元のファイル名を表示
-        summary_sheet.write(idx+3, 4, sum(1 for s in df['Status'] if s == 'A Only'))
-        summary_sheet.write(idx+3, 5, sum(1 for s in df['Status'] if s == 'B Only'))
-        summary_sheet.write(idx+3, 6, sum(1 for s in df['Status'] if s == 'Different'))
-        summary_sheet.write(idx+3, 7, len(all_labels))
+        summary_sheet.write(idx+3, 0, sheet_name)
+        summary_sheet.write(idx+3, 1, file_a_base)  # 元のファイル名を表示
+        summary_sheet.write(idx+3, 2, file_b_base)  # 元のファイル名を表示
+        summary_sheet.write(idx+3, 3, sum(1 for s in df['Status'] if s == 'A Only'))
+        summary_sheet.write(idx+3, 4, sum(1 for s in df['Status'] if s == 'B Only'))
+        summary_sheet.write(idx+3, 5, sum(1 for s in df['Status'] if s == 'Different'))
+        summary_sheet.write(idx+3, 6, len(all_labels))
         
         # 妥当性チェック結果をサマリーに追加
         if validate_ref_designators and filter_non_parts:
             invalid_a_count = len(info_a.get('invalid_ref_designators', []))
             invalid_b_count = len(info_b.get('invalid_ref_designators', []))
-            summary_sheet.write(idx+3, 8, invalid_a_count)
-            summary_sheet.write(idx+3, 9, invalid_b_count)
+            summary_sheet.write(idx+3, 7, invalid_a_count)
+            summary_sheet.write(idx+3, 8, invalid_b_count)
     
     # Excelファイルを保存
     writer.close()

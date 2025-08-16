@@ -380,14 +380,8 @@ class SignatureGenerator:
                 normalized_pos = self.transformer.normalize_coordinate_with_context(position, entity_type)
                 signature_parts.append(f"pos_{normalized_pos}")
             
-            # INSERT位置情報
-            insert_info = absolute_entity.get('insert_info')
-            if insert_info and not absolute_entity.get('is_direct_modelspace'):
-                insert_point = insert_info.get('insert_point')
-                if insert_point:
-                    normalized_insert = self.transformer.normalize_coordinate_with_context(
-                        insert_point, entity_type)
-                    signature_parts.append(f"from_insert_{normalized_insert}")
+            # INSERT位置情報は除外（絶対座標変換済みのため不要）
+            # 同じ最終座標・属性の entities は INSERT 元に関係なく同一として扱う
             
             # テキスト内容
             text_content = absolute_entity.get('text_content')
@@ -416,7 +410,7 @@ class SignatureGenerator:
     def _add_important_attributes(self, signature_parts: List, attrs: Dict, 
                                 entity_type: str, absolute_entity: Dict):
         """重要な属性を署名に追加"""
-        important_attrs = ['layer', 'color', 'height', 'radius', 'start_angle', 'end_angle']
+        important_attrs = ['color', 'height', 'radius', 'start_angle', 'end_angle']
         
         for attr_name in important_attrs:
             if attr_name in attrs:

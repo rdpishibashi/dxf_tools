@@ -32,19 +32,16 @@ def app():
         filter_option = st.checkbox(
             "機器符号（候補）のみ抽出", 
             value=False, 
-            help="以下の条件に合致するラベルは機器符号でないと判断して除外します："
-                 "\n- 最初の文字が「(」（例：(BK), (M5)）"
-                 "\n- 最初の文字が数字（例：2.1+, 500DJ）"
-                 "\n- 英大文字だけで2文字以下（E, L, PE）"
-                 "\n- 英大文字１文字に続いて数字（例：R1, T2）"
-                 "\n- 英大文字１文字に続いて数字と「.」からなる文字列（例：L1.1, P01）"
-                 "\n- 英字と「+」もしくは「-」の組み合わせ（例：P+, VCC-）"
-                 "\n- 「GND」を含む（例：GND, GND(M4)）"
-                 "\n- 「AWG」ではじまるラベル（例：AWG14, AWG18）"
-                 "\n- 英単語（＋数字）と空白からなるラベル（例：on ..., CB BOX FX3）"
-                 "\n- 「☆」ではじまるラベル"
-                 "\n- 「注」ではじまるラベル"
-                 "\n- ラベルの文字列中の「(」ではじまり「)」で閉じる文字列部分を削除"
+            help="以下のパターンに一致するラベルのみを機器符号として抽出します："
+                 "\n\n【基本パターン】"
+                 "\n• 英文字のみ: CNCNT, FB"
+                 "\n• 英文字+数字: R10, CN3, PSW1"  
+                 "\n• 英文字+数字+英文字: X14A, RMSS2A"
+                 "\n\n【括弧付きパターン】"
+                 "\n• 英文字(補足): FB(), MSS(MOTOR)"
+                 "\n• 英文字+数字(補足): R10(2.2K), MSSA(+)"
+                 "\n• 英文字+数字+英文字(補足): U23B(DAC)"
+                 "\n\n※英文字だけの場合は英文字2個以上、それ以外の場合は英文字1個以上、数字1個以上必要です"
         )
         
         # 機器符号妥当性チェックオプション（機器符号フィルタリングが有効な場合のみ表示）
@@ -57,6 +54,16 @@ def app():
                      "\n適合しない機器符号のリストを別途表示します。"
                      "\n（例：CBnnn, ELB(CB) nnn, R, Annn等の標準フォーマット）"
             )
+        
+        # 図面番号抽出オプション
+        extract_drawing_numbers_option = st.checkbox(
+            "図番・流用元図番を抽出", 
+            value=False,
+            help="図面番号フォーマット（例：DE5313-008-02B）に一致する文字列を抽出し、"
+                 "\n座標に基づいて図番（右下）と流用元図番を判別します。"
+                 "\nMTEXTフォーマットコード（\\A1;\\W0.855724;等）も適切に処理します。"
+        )
+        
     
     with col2:
         sort_option = st.selectbox(
@@ -83,9 +90,6 @@ def app():
     else:
         output_format = "個別ファイル"
     
-    # 「デバッグ情報を表示」オプションを削除
-    # デバッグ用途はfalseに固定
-    debug_option = False
     
     # 結果表示用のセッション状態を初期化
     if 'label_results' not in st.session_state:
@@ -281,10 +285,10 @@ def app():
                             labels, info = extract_labels(
                                 file_path, 
                                 filter_non_parts=filter_option, 
-                                sort_order=sort_value, 
-                                debug=debug_option,  # デバッグオプションはfalseに固定
+                                sort_order=sort_value,
                                 selected_layers=selected_layers,
-                                validate_ref_designators=validate_ref_designators
+                                validate_ref_designators=validate_ref_designators,
+                                extract_drawing_numbers_option=extract_drawing_numbers_option
                             )
                             
                             results[file_name] = (labels, info)
@@ -313,6 +317,21 @@ def app():
                                     invalid_filename = get_output_filename(file_name, 'labels', 'invalid.txt')
                                     invalid_content = "\n".join(file_info['invalid_ref_designators'])
                                     output_files[invalid_filename] = invalid_content.encode('utf-8')
+                                
+                                # 図面番号抽出結果がある場合、それも追加
+                                if extract_drawing_numbers_option:
+                                    drawing_results = []
+                                    if file_info.get('main_drawing_number'):
+                                        drawing_results.append(f"図番: {file_info['main_drawing_number']}")
+                                    if file_info.get('source_drawing_number'):
+                                        drawing_results.append(f"流用元図番: {file_info['source_drawing_number']}")
+                                    if file_info.get('all_drawing_numbers'):
+                                        drawing_results.append(f"全図面番号: {', '.join(file_info['all_drawing_numbers'])}")
+                                    
+                                    if drawing_results:
+                                        drawing_filename = get_output_filename(file_name, 'labels', 'drawing_numbers.txt')
+                                        drawing_content = "\n".join(drawing_results)
+                                        output_files[drawing_filename] = drawing_content.encode('utf-8')
                             
                             # ZIPアーカイブのダウンロードボタン
                             if output_files:
@@ -387,6 +406,33 @@ def app():
                             if process_button and sort_value != "none":
                                 sort_text = "昇順" if sort_value == "asc" else "逆順"
                                 st.info(f"ラベルを{sort_text}で並び替えました")
+                            
+                            # 図面番号抽出結果の表示
+                            if extract_drawing_numbers_option:
+                                st.subheader("図面番号抽出結果")
+                                
+                                if info.get('main_drawing_number') or info.get('source_drawing_number'):
+                                    col1, col2 = st.columns(2)
+                                    
+                                    with col1:
+                                        if info.get('main_drawing_number'):
+                                            st.success(f"**図番**: {info['main_drawing_number']}")
+                                        else:
+                                            st.warning("図番: 検出されませんでした")
+                                    
+                                    with col2:
+                                        if info.get('source_drawing_number'):
+                                            st.info(f"**流用元図番**: {info['source_drawing_number']}")
+                                        else:
+                                            st.info("流用元図番: 検出されませんでした")
+                                    
+                                    # 全図面番号リスト
+                                    if info.get('all_drawing_numbers'):
+                                        st.write(f"**抽出された全図面番号**: {', '.join(info['all_drawing_numbers'])}")
+                                    
+                                else:
+                                    st.warning("図面番号が検出されませんでした")
+                            
                             
                             # 機器符号妥当性チェック結果の表示
                             if validate_ref_designators and 'invalid_ref_designators' in info:

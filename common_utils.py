@@ -201,7 +201,18 @@ def validate_ref_designator(label, patterns):
 
 def filter_non_circuit_symbols(labels, debug=False):
     """
-    機器符号以外と判断されるラベルをフィルタリングする
+    機器符号フォーマットに一致しないラベルをフィルタリングする
+    
+    新しい機器符号フォーマット:
+    - AA+ (例: CNCNT, FB)
+    - AA+(*) (例: FB(), MSS(MOTOR))
+    - AA+NN+ (例: R10, CN3, PSW1)
+    - AA+NN+(*) (例: R10(2.2K), MSSA(+))
+    - AA+NN+A (例: X14A, RMSS2A)
+    - AA+NN+A(*) (例: U23B(DAC))
+    
+    フォーマット記号:
+    A: 英大文字1個, A+: 英大文字の0個以上の繰り返し, N: 数字1個, N+: 数字の0個以上の繰り返し, *: 1個以上の文字（特殊文字も含む）
     
     Args:
         labels: ラベルのリスト
@@ -210,81 +221,34 @@ def filter_non_circuit_symbols(labels, debug=False):
     Returns:
         tuple: (フィルタリング後のラベルリスト, フィルタリングで除外されたラベル数)
     """
+    # 機器符号のパターンを定義（括弧は1セットのみ有効）
+    patterns = [
+        r'^[A-Z]{2,}$',                    # AA+ (例: CNCNT, FB)
+        r'^[A-Z]{2,}\([^()]+\)$',         # AA+(*) (例: FB(), MSS(MOTOR)) - 括弧内に括弧を含まない
+        r'^[A-Z]+\d+$',                   # AA+NN+ (例: R10, CN3, PSW1)
+        r'^[A-Z]+\d+\([^()]+\)$',         # AA+NN+(*) (例: R10(2.2K), MSSA(+)) - 括弧内に括弧を含まない
+        r'^[A-Z]+\d+[A-Z]$',              # AA+NN+A (例: X14A, RMSS2A)
+        r'^[A-Z]+\d+[A-Z]\([^()]+\)$',    # AA+NN+A(*) (例: U23B(DAC)) - 括弧内に括弧を含まない
+    ]
+    
+    # パターンをコンパイル
+    compiled_patterns = [re.compile(pattern) for pattern in patterns]
+    
     filtered_labels = []
     filtered_out = []
     
     for label in labels:
-        # フィルタリング条件
-        is_filtered = False
-        reason = ""
+        # 括弧で囲まれた部分を削除してからチェック（ただし、機器符号パターンの括弧は保持）
+        # まず元のラベルでパターンマッチを試行
+        matches_pattern = any(pattern.match(label) for pattern in compiled_patterns)
         
-        # 空白を含むかどうかをチェック
-        if ' ' in label:
-            # 次の条件のいずれかに該当する場合にフィルタリング
-            
-            # 1. 空白を含み、英数字のみで構成されているラベル
-            if re.match(r'^[A-Za-z0-9 ]+$', label):
-                is_filtered = True
-                reason = "空白を含む英数字のみのラベル"
-            
-            # 2. 空白を含み、単語や短い説明のようなラベル
-            # 単語間にスペースがあり、記号が少ないもの（一般的な説明テキスト）
-            words = label.split()
-            if len(words) > 1:
-                # 括弧や記号を除いた部分の長さを計算
-                clean_part = re.sub(r'[^\w\s]', '', label)
-                special_chars = [c for c in label if not (c.isalnum() or c.isspace())]
-                
-                # 記号が少ない（全体の25%未満）または一般的な記号パターン（括弧など）
-                if len(special_chars) < len(label) * 0.25 or '(' in label:
-                    # 最初の単語が "to" や短い場合
-                    if len(words[0]) <= 3 or words[0].lower() == 'to' or words[0].lower() == 'on':
-                        is_filtered = True
-                        reason = "説明的なテキスト"
-        
-        # その他のフィルタリング条件
-        if not is_filtered:
-            if re.match(r'^\(', label):  # (BK), (M5) など
-                is_filtered = True
-                reason = "括弧で始まる"
-            elif re.match(r'^\d', label):  # 2.1+, 500DJ など
-                is_filtered = True
-                reason = "数字で始まる"
-            elif re.match(r'^[A-Z]{1,2}$', label):  # E, L, PE など
-                is_filtered = True
-                reason = "英大文字だけで2文字以下"
-            elif re.match(r'^[A-Z]\d+$', label):  # R1, T2 など
-                is_filtered = True
-                reason = "英大文字1文字に続いて数字"
-            elif re.match(r'^[A-Z]\d+\.\d+$', label):  # L1.1, P01 など
-                is_filtered = True
-                reason = "英大文字1文字に続いて数字と「.」からなる文字列"
-            elif re.match(r'^[A-Za-z]+[\+\-]$', label):  # P+, VCC- など
-                is_filtered = True
-                reason = "英字と「+」もしくは「-」の組み合わせ"
-            elif 'GND' in label:  # GND, GND(M4) など
-                is_filtered = True
-                reason = "「GND」を含む"
-            elif label.startswith('AWG'):  # AWG14, AWG18 など
-                is_filtered = True
-                reason = "「AWG」ではじまる"
-            elif label.startswith('☆'):
-                is_filtered = True
-                reason = "「☆」ではじまる"
-            elif label.startswith('注'):
-                is_filtered = True
-                reason = "「注」ではじまる"
-        
-        if is_filtered:
+        if matches_pattern:
+            # パターンに一致する場合は機器符号として採用
+            filtered_labels.append(label)
+        else:
+            # パターンに一致しない場合は除外
             if debug:
-                filtered_out.append(f"{label} (理由: {reason})")
-            continue
-        
-        # 括弧で囲まれた部分を削除する
-        clean_label = re.sub(r'\([^)]*\)', '', label).strip()
-        
-        if clean_label:
-            filtered_labels.append(clean_label)
+                filtered_out.append(f"{label} (理由: 機器符号フォーマットに一致しない)")
     
     # デバッグ情報
     if debug and filtered_out:
