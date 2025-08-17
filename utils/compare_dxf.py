@@ -740,12 +740,74 @@ class OutputGenerator:
                 logger.debug(f"Error creating entity {entity_type}: {e}")
             return False
     
+    def _make_inkscape_compatible(self, output_file: str):
+        """DXFファイルをInkscape互換に変換"""
+        try:
+            # ファイルを読み込み
+            with open(output_file, 'rb') as f:
+                content = f.read()
+            
+            # UTF-8として読み込み、日本語文字を保持しつつcp932でエンコード可能な形に変換
+            try:
+                # UTF-8として解釈
+                text_content = content.decode('utf-8')
+            except UnicodeDecodeError:
+                # UTF-8で読めない場合は、バイナリとして処理
+                text_content = content.decode('utf-8', errors='replace')
+            
+            # 日本語文字をUnicodeエスケープシーケンスに変換（DXFでサポートされている）
+            # または代替文字に変換
+            lines = text_content.split('\n')
+            converted_lines = []
+            
+            for line in lines:
+                try:
+                    # cp932でエンコード可能かチェック
+                    line.encode('cp932')
+                    converted_lines.append(line)
+                except UnicodeEncodeError:
+                    # cp932でエンコードできない文字がある場合
+                    if any(ord(c) > 127 for c in line):  # 非ASCII文字が含まれている
+                        # 日本語文字を含む行の場合、代替表現を使用
+                        converted_line = ""
+                        for char in line:
+                            try:
+                                char.encode('cp932')
+                                converted_line += char
+                            except UnicodeEncodeError:
+                                # 日本語文字をUnicodeエスケープまたは代替文字に変換
+                                if ord(char) > 127:
+                                    converted_line += f"\\U+{ord(char):04X}"
+                                else:
+                                    converted_line += char
+                        converted_lines.append(converted_line)
+                    else:
+                        converted_lines.append(line)
+            
+            # cp932でエンコードして保存
+            converted_content = '\n'.join(converted_lines)
+            with open(output_file, 'w', encoding='cp932', errors='replace') as f:
+                f.write(converted_content)
+                
+        except Exception as e:
+            logger.warning(f"Failed to make file Inkscape compatible: {e}")
+            # 失敗した場合は、最低限ASCII文字のみで保存
+            try:
+                with open(output_file, 'rb') as f:
+                    content = f.read()
+                ascii_content = content.decode('utf-8', errors='replace').encode('ascii', errors='replace').decode('ascii')
+                with open(output_file, 'w', encoding='cp932', errors='replace') as f:
+                    f.write(ascii_content)
+            except Exception:
+                pass
+    
     def create_diff_dxf(self, entities_a: Dict, entities_b: Dict, 
                         deleted_hashes: Set[str], added_hashes: Set[str], 
                         common_hashes: Set[str], output_file: str):
         """差分DXFファイルを作成"""
         try:
-            new_doc = ezdxf.new('R2010', setup=True)
+            # R2018以降でより良いUnicode対応
+            new_doc = ezdxf.new('R2018', setup=True)
             msp = new_doc.modelspace()
             
             # レイヤーを作成
@@ -789,8 +851,11 @@ class OutputGenerator:
                         self.create_entity_from_absolute(absolute_entity, msp, layer_name, layer_color)
                         break  # 最初のインスタンスのみ
             
-            # DXFファイルを保存
+            # DXFファイルを保存（デフォルトエンコーディングを使用）
             new_doc.saveas(output_file)
+            
+            # Inkscape互換性のための後処理
+            self._make_inkscape_compatible(output_file)
             return True
             
         except Exception as e:
