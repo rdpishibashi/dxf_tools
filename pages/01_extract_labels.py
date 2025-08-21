@@ -128,8 +128,20 @@ def app():
                     except Exception as e:
                         st.error(f"ファイル {file_name} のレイヤー情報読み込みでエラー: {str(e)}")
             
-            # レイヤー選択UI
-            if layer_maps:
+            # ファイル・レイヤー選択UI
+            st.subheader("ファイル選択")
+            
+            # レイヤー情報を表示するためのボタン
+            show_layers = st.button("レイヤー情報を表示", help="アップロードされたファイルのレイヤー情報を確認し、選択できます")
+            
+            # セッション状態でレイヤー表示状態を管理
+            if 'show_layer_selection' not in st.session_state:
+                st.session_state.show_layer_selection = False
+            
+            if show_layers:
+                st.session_state.show_layer_selection = True
+            
+            if layer_maps and st.session_state.show_layer_selection:
                 # 全ファイル共通のレイヤーがあるかどうか
                 has_common_layers = len(common_layers) > 0
                 
@@ -253,10 +265,14 @@ def app():
                     # 選択されたレイヤーを確認
                     selected_layers_by_file = {}
                     for file_name in layer_maps.keys():
-                        selected_layers_by_file[file_name] = [
-                            layer for layer, is_selected in st.session_state.layer_states[file_name].items() 
-                            if is_selected
-                        ]
+                        if 'layer_states' in st.session_state and file_name in st.session_state.layer_states:
+                            selected_layers_by_file[file_name] = [
+                                layer for layer, is_selected in st.session_state.layer_states[file_name].items() 
+                                if is_selected
+                            ]
+                        else:
+                            # レイヤー選択が行われていない場合は全レイヤーを選択
+                            selected_layers_by_file[file_name] = layer_maps[file_name]
                     
                     # レイヤーが選択されていない場合の警告
                     files_without_layers = [
@@ -408,7 +424,7 @@ def app():
                                 st.info(f"ラベルを{sort_text}で並び替えました")
                             
                             # 図面番号抽出結果の表示
-                            if extract_drawing_numbers_option:
+                            if info.get('main_drawing_number') or info.get('source_drawing_number') or info.get('all_drawing_numbers'):
                                 st.subheader("図面番号抽出結果")
                                 
                                 if info.get('main_drawing_number') or info.get('source_drawing_number'):

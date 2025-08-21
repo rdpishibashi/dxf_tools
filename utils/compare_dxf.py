@@ -740,66 +740,34 @@ class OutputGenerator:
                 logger.debug(f"Error creating entity {entity_type}: {e}")
             return False
     
-    def _make_inkscape_compatible(self, output_file: str):
-        """DXFファイルをInkscape互換に変換"""
+    def _ensure_japanese_text_compatibility(self, output_file: str):
+        """日本語テキストの互換性を確保"""
         try:
-            # ファイルを読み込み
+            # DXF R2018+ はネイティブでUTF-8をサポートするため、
+            # ファイルがUTF-8で正しく保存されていることを確認
             with open(output_file, 'rb') as f:
                 content = f.read()
             
-            # UTF-8として読み込み、日本語文字を保持しつつcp932でエンコード可能な形に変換
+            # UTF-8として読み込み、正常に読み込めることを確認
             try:
-                # UTF-8として解釈
                 text_content = content.decode('utf-8')
+                # UTF-8で正常に読み込める場合は何もしない
+                logger.info("DXF file successfully uses UTF-8 encoding for Japanese text")
+                return
             except UnicodeDecodeError:
-                # UTF-8で読めない場合は、バイナリとして処理
-                text_content = content.decode('utf-8', errors='replace')
-            
-            # 日本語文字をUnicodeエスケープシーケンスに変換（DXFでサポートされている）
-            # または代替文字に変換
-            lines = text_content.split('\n')
-            converted_lines = []
-            
-            for line in lines:
-                try:
-                    # cp932でエンコード可能かチェック
-                    line.encode('cp932')
-                    converted_lines.append(line)
-                except UnicodeEncodeError:
-                    # cp932でエンコードできない文字がある場合
-                    if any(ord(c) > 127 for c in line):  # 非ASCII文字が含まれている
-                        # 日本語文字を含む行の場合、代替表現を使用
-                        converted_line = ""
-                        for char in line:
-                            try:
-                                char.encode('cp932')
-                                converted_line += char
-                            except UnicodeEncodeError:
-                                # 日本語文字をUnicodeエスケープまたは代替文字に変換
-                                if ord(char) > 127:
-                                    converted_line += f"\\U+{ord(char):04X}"
-                                else:
-                                    converted_line += char
-                        converted_lines.append(converted_line)
-                    else:
-                        converted_lines.append(line)
-            
-            # cp932でエンコードして保存
-            converted_content = '\n'.join(converted_lines)
-            with open(output_file, 'w', encoding='cp932', errors='replace') as f:
-                f.write(converted_content)
+                # UTF-8で読めない場合のみ修正を試行
+                logger.warning("DXF file encoding issue detected, attempting to fix")
                 
+                # エラー許容でUTF-8として読み込み
+                text_content = content.decode('utf-8', errors='replace')
+                
+                # UTF-8で再保存
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    f.write(text_content)
+                    
         except Exception as e:
-            logger.warning(f"Failed to make file Inkscape compatible: {e}")
-            # 失敗した場合は、最低限ASCII文字のみで保存
-            try:
-                with open(output_file, 'rb') as f:
-                    content = f.read()
-                ascii_content = content.decode('utf-8', errors='replace').encode('ascii', errors='replace').decode('ascii')
-                with open(output_file, 'w', encoding='cp932', errors='replace') as f:
-                    f.write(ascii_content)
-            except Exception:
-                pass
+            logger.warning(f"Error ensuring Japanese text compatibility: {e}")
+            # エラーの場合は元のファイルをそのまま使用
     
     def create_diff_dxf(self, entities_a: Dict, entities_b: Dict, 
                         deleted_hashes: Set[str], added_hashes: Set[str], 
@@ -851,11 +819,11 @@ class OutputGenerator:
                         self.create_entity_from_absolute(absolute_entity, msp, layer_name, layer_color)
                         break  # 最初のインスタンスのみ
             
-            # DXFファイルを保存（デフォルトエンコーディングを使用）
+            # DXFファイルを保存（UTF-8エンコーディングで日本語テキストを保持）
             new_doc.saveas(output_file)
             
-            # Inkscape互換性のための後処理
-            self._make_inkscape_compatible(output_file)
+            # 日本語テキストの互換性確保
+            self._ensure_japanese_text_compatibility(output_file)
             return True
             
         except Exception as e:
