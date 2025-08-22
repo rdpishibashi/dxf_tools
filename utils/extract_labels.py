@@ -35,18 +35,17 @@ def get_layers_from_dxf(dxf_file):
 
 def clean_mtext_format_codes(text: str, debug=False) -> str:
     """
-    MTEXTのフォーマットコードを適切に除去し、セミコロン区切りの最後の文字列を取得する
+    MTEXTのフォーマットコードを除去して完全なテキスト内容を保持する
     
     Args:
         text: MTEXTの生テキスト
         debug: デバッグ情報を出力するかどうか
         
     Returns:
-        str: クリーンなテキスト
+        str: 完全なテキスト内容（\Pなどの構造を保持）
     """
     if not text:
         return ""
-    
     
     # バックスラッシュと円マークの両方に対応
     # 日本語環境では ¥ (円マーク, Unicode U+00A5) が使われることがある
@@ -55,40 +54,46 @@ def clean_mtext_format_codes(text: str, debug=False) -> str:
     # まず、円マークをバックスラッシュに正規化
     normalized_text = text.replace('¥', '\\')
     
+    # フォーマット制御コードのみを除去し、テキスト構造（\Pなど）は保持
+    cleaned = normalized_text
     
-    # セミコロン区切りで分割し、最後の文字列を取得
-    parts = normalized_text.split(';')
+    # フォント制御コード \f...;を除去
+    cleaned = re.sub(r'\\f[^;]*;', '', cleaned)
     
+    # 高さ制御コード \H...;を除去  
+    cleaned = re.sub(r'\\H[^;]*;', '', cleaned)
     
-    if len(parts) > 1:
-        # セミコロンがある場合は最後の部分を取得
-        last_part = parts[-1]
-    else:
-        # セミコロンがない場合は全体を使用
-        last_part = normalized_text
+    # 幅制御コード \W...;を除去
+    cleaned = re.sub(r'\\W[^;]*;', '', cleaned)
     
-    # 制御文字を除去（\Pは空白に置換、他の\+英文字は削除）
-    # \P は改行を表すので空白に置換
-    step1 = re.sub(r'\\\\P', ' ', last_part)
-    # 他の\+英文字パターンを削除
-    step1 = re.sub(r'\\\\[A-Za-z]', '', step1)
+    # カラー制御コード \C...;を除去
+    cleaned = re.sub(r'\\C[^;]*;', '', cleaned)
     
+    # 配置制御コード \A...;を除去
+    cleaned = re.sub(r'\\A[^;]*;', '', cleaned)
     
-    # 残った制御文字パターンをより徹底的に除去
-    # \数字, \記号 等も除去
-    step2 = re.sub(r'\\[^\\]*', '', step1)
+    # 追跡制御コード \T...;を除去
+    cleaned = re.sub(r'\\T[^;]*;', '', cleaned)
     
+    # その他の制御コード（文字;形式）を除去
+    # ただし、\Pは保持する（テキスト構造として重要）
+    cleaned = re.sub(r'\\(?!P)[^\\;]*;', '', cleaned)
+    
+    # スペース制御 \~ を通常のスペースに変換
+    cleaned = cleaned.replace('\\~', ' ')
+    
+    # バックスラッシュエスケープを処理
+    cleaned = cleaned.replace('\\\\', '\\')
+    cleaned = cleaned.replace('\\{', '{')
+    cleaned = cleaned.replace('\\}', '}')
     
     # 複数の空白を単一の空白に変換
-    step3 = re.sub(r'\s+', ' ', step2)
+    cleaned = re.sub(r' +', ' ', cleaned)
     
+    result = cleaned.strip()
     
-    # 残ったセミコロンや制御文字を除去
-    cleaned_text = step3.replace(';', '').replace('\\', '')
-    
-    
-    result = cleaned_text.strip()
-    
+    if debug:
+        print(f"MTEXT cleaning: '{text}' -> '{result}'")
     
     return result
 
@@ -156,8 +161,16 @@ def extract_text_from_entity(entity, debug=False) -> Tuple[str, str, Tuple[float
                 except:
                     pass
         
-        # フォーマットコードをクリーンアップ
-        clean_text = clean_mtext_format_codes(raw_text, debug) if raw_text else ""
+        # フォーマットコードをクリーンアップ（エンティティタイプに応じて）
+        if raw_text:
+            if entity.dxftype() == 'MTEXT':
+                # MTEXT の場合はフォーマットコードを除去
+                clean_text = clean_mtext_format_codes(raw_text, debug)
+            else:
+                # TEXT の場合はそのまま使用（フォーマットコードは含まれない）
+                clean_text = raw_text.strip()
+        else:
+            clean_text = ""
         
         
         return raw_text, clean_text, (x, y)
@@ -294,31 +307,7 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
             if e.dxftype() in ['TEXT', 'MTEXT']:
                 all_entities_to_process.append(e)
         
-        # 2. BLOCKSからエンティティを収集
-        try:
-            # 方法1: 直接反復処理
-            for block in doc.blocks:
-                for e in block:
-                    if e.dxftype() in ['TEXT', 'MTEXT']:
-                        all_entities_to_process.append(e)
-        except Exception as e:
-            # 方法2: __iter__を使用
-            try:
-                for block in doc.blocks.__iter__():
-                    for entity in block:
-                        if entity.dxftype() in ['TEXT', 'MTEXT']:
-                            all_entities_to_process.append(entity)
-            except Exception as iter_err:
-                # 方法3: 内部データ構造にアクセス
-                try:
-                    if hasattr(doc.blocks, '_data'):
-                        block_dict = doc.blocks._data
-                        for block_name, block in block_dict.items():
-                            for entity in block:
-                                if entity.dxftype() in ['TEXT', 'MTEXT']:
-                                    all_entities_to_process.append(entity)
-                except Exception as data_err:
-                    pass
+        # 2. BLOCKSから直接は収集しない - INSERT経由でのみ処理する
         
         # 3. PAPER_SPACEからエンティティを収集
         try:
@@ -330,14 +319,51 @@ def extract_labels(dxf_file, filter_non_parts=False, sort_order="asc", debug=Fal
         except Exception as e:
             pass
         
-        # 重複を除去
+        # 4. INSERT エンティティを処理してブロック参照を展開
+        try:
+            # ブロック定義内のテキストエンティティをキャッシュ
+            block_text_cache = {}
+            for block in doc.blocks:
+                block_texts = []
+                for entity in block:
+                    if entity.dxftype() in ['TEXT', 'MTEXT']:
+                        block_texts.append(entity)
+                if block_texts:
+                    block_text_cache[block.name] = block_texts
+            
+            # INSERT エンティティを処理
+            for e in msp:
+                if e.dxftype() == 'INSERT':
+                    # INSERT エンティティのブロック名を取得
+                    block_name = e.dxf.name
+                    
+                    # そのブロック内のテキストエンティティを取得
+                    if block_name in block_text_cache:
+                        for text_entity in block_text_cache[block_name]:
+                            # INSERT エンティティのレイヤーをチェック
+                            if e.dxf.layer in selected_layers:
+                                all_entities_to_process.append(text_entity)
+                    
+            # ペーパースペースの INSERT エンティティも処理
+            for layout in doc.layouts:
+                if layout.name != 'Model':
+                    for e in layout:
+                        if e.dxftype() == 'INSERT':
+                            block_name = e.dxf.name
+                            if block_name in block_text_cache:
+                                for text_entity in block_text_cache[block_name]:
+                                    if e.dxf.layer in selected_layers:
+                                        all_entities_to_process.append(text_entity)
+                        
+        except Exception as e:
+            pass  # INSERT処理エラーは無視して続行
+        
+        # 重複を除去（ここではINSERT経由の重複も許可する）
         processed_entity_ids = set()
         unique_entities = []
         for e in all_entities_to_process:
-            entity_id = id(e)
-            if entity_id not in processed_entity_ids:
-                processed_entity_ids.add(entity_id)
-                unique_entities.append(e)
+            # INSERT経由の同じブロック内エンティティは重複として扱わない
+            unique_entities.append(e)
         
         
         # 実際の抽出処理
