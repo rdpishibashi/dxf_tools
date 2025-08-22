@@ -598,21 +598,21 @@ class DiffAnalyzer:
 class LayerConfig:
     """レイヤー設定クラス"""
     
-    def __init__(self, deleted_color: int = 1, added_color: int = 3, unchanged_color: int = 4):
+    def __init__(self, deleted_color: int = 6, added_color: int = 4, unchanged_color: int = 7):
         self.layer_settings = {
             'DELETED': {
                 'name': 'DELETED',
-                'color': deleted_color,  # デフォルト: 赤
+                'color': deleted_color,  # デフォルト: マゼンタ
                 'description': 'Entities present in file A but not in file B'
             },
             'ADDED': {
                 'name': 'ADDED', 
-                'color': added_color,  # デフォルト: 緑
+                'color': added_color,  # デフォルト: シアン
                 'description': 'Entities present in file B but not in file A'
             },
             'UNCHANGED': {
                 'name': 'UNCHANGED',
-                'color': unchanged_color,  # デフォルト: シアン
+                'color': unchanged_color,  # デフォルト: 白/黒
                 'description': 'Entities present in both files'
             }
         }
@@ -833,9 +833,9 @@ class OutputGenerator:
 
 def compare_dxf_files_and_generate_dxf(file_a: str, file_b: str, output_file: str, 
                                        tolerance: float = 0.01, 
-                                       deleted_color: int = 1, 
-                                       added_color: int = 3, 
-                                       unchanged_color: int = 4) -> bool:
+                                       deleted_color: int = 6, 
+                                       added_color: int = 4, 
+                                       unchanged_color: int = 7) -> bool:
     """
     DXFファイル比較メイン処理（Streamlit用インターフェース）
     
@@ -844,9 +844,9 @@ def compare_dxf_files_and_generate_dxf(file_a: str, file_b: str, output_file: st
         file_b: 比較対象DXFファイルパス
         output_file: 出力DXFファイルパス
         tolerance: 座標許容誤差
-        deleted_color: 削除エンティティの色（デフォルト: 1=赤）
-        added_color: 追加エンティティの色（デフォルト: 3=緑）
-        unchanged_color: 変更なしエンティティの色（デフォルト: 4=シアン）
+        deleted_color: 削除エンティティの色（デフォルト: 6=マゼンタ）
+        added_color: 追加エンティティの色（デフォルト: 4=シアン）
+        unchanged_color: 変更なしエンティティの色（デフォルト: 7=白/黒）
         
     Returns:
         bool: 成功した場合True、失敗した場合False
