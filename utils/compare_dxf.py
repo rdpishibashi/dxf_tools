@@ -269,6 +269,26 @@ class EntityExpander:
                 except Exception:
                     pass
         
+        # ELLIPSE major_axis ベクトルの変換（方向ベクトルなので原点からの変換）
+        if 'major_axis' in clean_attrs:
+            original_major_axis = clean_attrs['major_axis']
+            try:
+                if hasattr(original_major_axis, 'x'):
+                    axis_tuple = (original_major_axis.x, original_major_axis.y, 
+                                getattr(original_major_axis, 'z', 0.0))
+                else:
+                    axis_tuple = tuple(original_major_axis) if original_major_axis else (1, 0, 0)
+                
+                # ベクトル変換（平行移動は適用しない）
+                axis_homogeneous = np.array([axis_tuple[0], axis_tuple[1], axis_tuple[2], 0.0])
+                transformed_axis = transform_matrix @ axis_homogeneous
+                transformed_attrs['major_axis'] = (float(transformed_axis[0]), 
+                                                 float(transformed_axis[1]), 
+                                                 float(transformed_axis[2]))
+                
+            except Exception:
+                pass
+        
         # LWPOLYLINE頂点の変換
         if 'vertices' in clean_attrs:
             original_vertices = clean_attrs['vertices']
@@ -288,6 +308,21 @@ class EntityExpander:
         if entity_type in ['CIRCLE', 'ARC'] and 'radius' in clean_attrs:
             avg_scale = (scale_x + scale_y) / 2.0
             transformed_attrs['radius'] = clean_attrs['radius'] * avg_scale
+        
+        if entity_type == 'ELLIPSE':
+            # ELLIPSE の major_axis ベクトルにスケールを適用
+            if 'major_axis' in clean_attrs:
+                major_axis = clean_attrs['major_axis']
+                if hasattr(major_axis, 'x'):
+                    scaled_major_axis = (major_axis.x * scale_x, major_axis.y * scale_y, 
+                                       getattr(major_axis, 'z', 0.0) * scale_z)
+                else:
+                    coords = list(major_axis) if major_axis else [1, 0, 0]
+                    scaled_major_axis = (coords[0] * scale_x, 
+                                       coords[1] * scale_y if len(coords) > 1 else 0.0,
+                                       coords[2] * scale_z if len(coords) > 2 else 0.0)
+                transformed_attrs['major_axis'] = scaled_major_axis
+            # ratio は変更不要（major と minor の比は保持）
         
         if entity_type in ['TEXT', 'MTEXT', 'ATTRIB'] and 'height' in clean_attrs:
             transformed_attrs['height'] = clean_attrs['height'] * scale_y
@@ -460,6 +495,20 @@ class SignatureGenerator:
                 math.radians(self.transformer.tolerance_config.angle_tolerance))
             signature_parts.append(f"arc_{center}_{radius}_{start_angle}_{end_angle}")
         
+        elif entity_type == 'ELLIPSE' and 'center' in attrs:
+            center = self.transformer.normalize_coordinate_with_context(attrs['center'], entity_type)
+            major_axis = self.transformer.normalize_coordinate_with_context(
+                attrs.get('major_axis', (1, 0, 0)), entity_type)
+            ratio = self.transformer.normalize_coordinate_precise(
+                attrs.get('ratio', 1.0), self.transformer.tolerance_config.length_tolerance)
+            start_param = self.transformer.normalize_coordinate_precise(
+                attrs.get('start_param', 0.0), 
+                math.radians(self.transformer.tolerance_config.angle_tolerance))
+            end_param = self.transformer.normalize_coordinate_precise(
+                attrs.get('end_param', 2 * math.pi), 
+                math.radians(self.transformer.tolerance_config.angle_tolerance))
+            signature_parts.append(f"ellipse_{center}_{major_axis}_{ratio}_{start_param}_{end_param}")
+        
         elif entity_type == 'LWPOLYLINE' and 'vertices' in attrs:
             vertices = attrs['vertices']
             if vertices:
@@ -554,6 +603,19 @@ class DiffAnalyzer:
                     'radius': attrs.get('radius', 0),
                     'start_angle': attrs.get('start_angle', 0), 
                     'end_angle': attrs.get('end_angle', 0)
+                }
+            
+            elif entity_type == 'ELLIPSE' and 'center' in attrs:
+                center = self.signature_generator.transformer.normalize_coordinate_with_context(
+                    attrs['center'], entity_type)
+                major_axis = self.signature_generator.transformer.normalize_coordinate_with_context(
+                    attrs.get('major_axis', (1, 0, 0)), entity_type)
+                entity_data['ellipse_geometry'] = {
+                    'center': center,
+                    'major_axis': major_axis,
+                    'ratio': attrs.get('ratio', 1.0),
+                    'start_param': attrs.get('start_param', 0.0),
+                    'end_param': attrs.get('end_param', 2 * math.pi)
                 }
                 
         except Exception:
@@ -670,6 +732,16 @@ class OutputGenerator:
                 target_space.add_arc(center=center, radius=radius,
                                    start_angle=start_angle, end_angle=end_angle,
                                    dxfattribs=dxfattribs)
+                
+            elif entity_type == 'ELLIPSE':
+                center = attrs.get('center', (0, 0, 0))
+                major_axis = attrs.get('major_axis', (1, 0, 0))
+                ratio = attrs.get('ratio', 1.0)
+                start_param = attrs.get('start_param', 0.0)
+                end_param = attrs.get('end_param', 2 * math.pi)
+                target_space.add_ellipse(center=center, major_axis=major_axis,
+                                       ratio=ratio, start_param=start_param, 
+                                       end_param=end_param, dxfattribs=dxfattribs)
                 
             elif entity_type == 'TEXT':
                 text_content = absolute_entity.get('text_content', '')
